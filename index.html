@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OptionsLens</title>
+<style>
+:root{--bg:#0e1117;--card:#171b24;--ink:#e6eaf2;--mut:#8b93a7;--ok:#3ddc97;--bad:#ff5c5c;--warn:#ffb020;--line:#2a3040}
+*{box-sizing:border-box}
+body{margin:auto;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,sans-serif;padding:16px;max-width:760px}
+h1{font-size:22px;margin:4px 0 2px} .mut{color:var(--mut);font-size:13px}
+.card{background:var(--card);border-radius:12px;padding:14px;margin:10px 0}
+label{display:block;color:var(--mut);font-size:12px;margin:10px 0 4px}
+input,textarea{width:100%;background:#1f2430;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:11px;font-size:16px;font-family:inherit}
+button{width:100%;background:var(--ok);color:#000;border:0;border-radius:10px;padding:13px;font-size:16px;font-weight:700;margin-top:12px}
+button:disabled{opacity:.5} .tabs{display:flex;gap:8px;margin:12px 0} .tabs button{margin:0;background:#1f2430;color:var(--ink)} .tabs button.on{background:var(--ok);color:#000}
+.row{display:flex;justify-content:space-between;padding:4px 0;gap:10px} .row b{text-align:right}
+.ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+table{width:100%;border-collapse:collapse;font-size:13px} td,th{padding:6px 4px;text-align:right;border-bottom:1px solid var(--line)} th{color:var(--mut);font-weight:600} td:first-child,th:first-child{text-align:left}
+tr.click{cursor:pointer} .big{font-size:20px;font-weight:700} #err,#serr{color:var(--bad);margin-top:8px}
+.bar{height:10px;border-radius:5px;background:var(--bad);overflow:hidden;margin:6px 0} .bar i{display:block;height:100%;background:var(--ok)}
+</style>
+</head>
+<body>
+<h1>OptionsLens</h1>
+<div class="mut">Cosa fanno le opzioni di un titolo: volumi, premi, muri di open interest, attività insolita. Dati CBOE ritardati di circa 15 minuti, ultima sessione disponibile.</div>
+<div class="card" id="pwbox" style="display:none"><label>Password</label><input id="pw" type="password"></div>
+<div class="tabs"><button id="t1" class="on">Analisi</button><button id="t2">Scanner</button></div>
+
+<div id="p1">
+  <div class="card"><label>Titolo (es. AAPL, TSLA, SPY, SPX)</label><input id="sym" value="SPY" autocapitalize="characters">
+  <button id="go">Analizza</button><div id="err"></div></div>
+  <div id="out"></div>
+</div>
+
+<div id="p2" style="display:none">
+  <div class="card"><label>Titoli da scansionare (separati da virgola)</label><textarea id="list" rows="3"></textarea>
+  <button id="scan">Avvia scanner</button><div id="prog" class="mut"></div><div id="serr"></div></div>
+  <div id="sout"></div>
+</div>
+
+<p class="mut"><b>Come leggerlo, onestamente:</b> i dati gratuiti dicono quanti contratti sono stati scambiati e a che prezzo, ma <b>non</b> se chi ha operato stava comprando o vendendo, né se apriva o chiudeva una posizione. La "lettura" (rialzista/ribassista) è quindi un indizio basato su proporzioni, non la prova di cosa fanno i grandi operatori: molte opzioni sono coperture o parti di strategie miste. Non è consulenza finanziaria; le opzioni possono azzerarsi.</p>
+
+<script>
+const $=id=>document.getElementById(id);
+const n0=x=>x==null?"n/d":Number(x).toLocaleString("it-IT",{maximumFractionDigits:0});
+const n2=x=>x==null?"n/d":Number(x).toLocaleString("it-IT",{minimumFractionDigits:2,maximumFractionDigits:2});
+const money=x=>{x=Math.abs(x);return x>=1e9?n2(x/1e9)+" mld $":x>=1e6?n2(x/1e6)+" mln $":n0(x/1e3)+" mila $"};
+let META={list:[]};
+function hdrs(){const h={};if(META.needs_password){h["X-Pass"]=$("pw").value;try{localStorage.setItem("ol_pw",$("pw").value)}catch(e){}}return h}
+async function api(sym){
+  const r=await fetch("/api/chain?symbol="+encodeURIComponent(sym),{headers:hdrs()});
+  const j=await r.json(); if(!r.ok) throw new Error(j.error||"errore"); return j;
+}
+async function init(){
+  try{META=await (await fetch("/api/meta")).json();}catch(e){$("err").textContent="Server non raggiungibile.";}
+  $("list").value=(META.list||[]).join(", ");
+  if(META.needs_password){$("pwbox").style.display="block";try{$("pw").value=localStorage.getItem("ol_pw")||""}catch(e){}}
+}
+function tab(i){$("p1").style.display=i==1?"":"none";$("p2").style.display=i==2?"":"none";$("t1").className=i==1?"on":"";$("t2").className=i==2?"on":""}
+$("t1").onclick=()=>tab(1);$("t2").onclick=()=>tab(2);
+
+function show(r){
+  const c=r.label=="rialzista"?"ok":r.label=="ribassista"?"bad":"warn";
+  const share=(r.call_premium+r.put_premium)>0?100*r.call_premium/(r.call_premium+r.put_premium):50;
+  let h=`<div class="card"><div class="mut">${r.symbol} · ${n2(r.spot)} $ · dati del ${r.asof} (${r.ts||""}) · ${n0(r.contracts)} contratti</div>
+   <div class="big ${c}">Lettura: ${r.label}</div>
+   ${r.why.map(w=>`<div class="mut">• ${w}</div>`).join("")||'<div class="mut">Pochi scambi per trarre una lettura.</div>'}</div>`;
+  h+=`<div class="card"><b>Chi sta scambiando cosa</b>
+   <div class="row"><span>Volume call / put</span><b>${n0(r.cvol)} / ${n0(r.pvol)}</b></div>
+   <div class="row"><span>Rapporto put/call sui volumi</span><b>${n2(r.pc_vol)}</b></div>
+   <div class="row"><span>Rapporto put/call sull'open interest</span><b>${n2(r.pc_oi)}</b></div>
+   <div class="row"><span>Premio scambiato call</span><b class="ok">${money(r.call_premium)}</b></div>
+   <div class="row"><span>Premio scambiato put</span><b class="bad">${money(r.put_premium)}</b></div>
+   <div class="bar"><i style="width:${share.toFixed(0)}%"></i></div><div class="mut">verde = quota di premio su call (${share.toFixed(0)}%)</div>
+   <div class="row"><span>Skew (put - call, 25 delta, ~30 gg)</span><b>${r.skew==null?"n/d":(r.skew>0?"+":"")+n2(r.skew)+" pt"}</b></div>
+   <div class="row"><span>Esposizione gamma stimata</span><b class="${r.gex>=0?"ok":"bad"}">${n0(r.gex)} mln $ / 1%</b></div>
+   <div class="mut">Gamma positiva: di solito i prezzi tendono a smorzarsi; negativa: i movimenti possono amplificarsi. È una stima con ipotesi forti.</div></div>`;
+  h+=`<div class="card"><b>Scadenze</b><table><tr><th>Scadenza</th><th>IV ATM</th><th>Mov. atteso</th><th>Max pain</th><th>P/C vol</th></tr>`
+   +r.expiries.map(e=>`<tr><td>${e.exp}<br><span class="mut">${e.dte} gg</span></td><td>${e.atm_iv==null?"n/d":n2(e.atm_iv)+"%"}</td><td>${e.move_pct==null?"n/d":"±"+n2(e.move_pct)+"%"}</td><td>${e.max_pain==null?"n/d":n2(e.max_pain)}</td><td>${e.cvol?n2(e.pvol/e.cvol):"n/d"}</td></tr>`).join("")
+   +`</table><div class="mut">Movimento atteso = costo dello straddle sul prezzo: quanto il mercato "paga" per un movimento fino a quella scadenza.</div></div>`;
+  h+=`<div class="card"><b>Muri di open interest</b> <span class="mut">(scadenza ${r.near_exp})</span>
+   <div class="row"><span>Sopra il prezzo (call)</span><b class="ok">${r.wall_calls.map(w=>n2(w.k)+" ("+n0(w.oi)+")").join(" · ")||"n/d"}</b></div>
+   <div class="row"><span>Sotto il prezzo (put)</span><b class="bad">${r.wall_puts.map(w=>n2(w.k)+" ("+n0(w.oi)+")").join(" · ")||"n/d"}</b></div>
+   <div class="mut">Livelli con molti contratti aperti: spesso fanno da calamita o da barriera, non sempre.</div></div>`;
+  h+=`<div class="card"><b>Attività insolita</b> <span class="mut">(volume ≥ open interest, almeno 50.000 $ di premio)</span>`;
+  h+=r.unusual.length?`<table><tr><th>Contratto</th><th>Vol</th><th>OI</th><th>Premio</th></tr>`+r.unusual.map(u=>`<tr><td>${u.type=="C"?"CALL":"PUT"} ${n2(u.k)}<br><span class="mut">${u.exp} · IV ${u.iv}%</span></td><td>${n0(u.vol)}</td><td>${n0(u.oi)}</td><td>${money(u.premium)}</td></tr>`).join("")+`</table>`:`<div class="mut">Nessun contratto fuori dall'ordinario.</div>`;
+  $("out").innerHTML=h+`</div>`;
+}
+async function go(sym){
+  $("err").textContent="";$("go").disabled=true;$("go").textContent="Scarico…";
+  try{show(await api(sym||$("sym").value))}catch(e){$("err").textContent=e.message}
+  $("go").disabled=false;$("go").textContent="Analizza";
+}
+$("go").onclick=()=>go();
+
+function snaps(){try{return JSON.parse(localStorage.getItem("ol_snap")||"{}")}catch(e){return {}}}
+function saveSnap(date,row){try{const s=snaps();(s[date]=s[date]||{})[row.symbol]={pc:row.pc_vol,sh:row.share,sc:row.score};
+  const keys=Object.keys(s).sort();while(keys.length>30)delete s[keys.shift()];localStorage.setItem("ol_snap",JSON.stringify(s))}catch(e){}}
+function prevSnap(date,sym){const s=snaps();const ks=Object.keys(s).filter(k=>k<date).sort();for(let i=ks.length-1;i>=0;i--){if(s[ks[i]][sym])return {d:ks[i],v:s[ks[i]][sym]}}return null}
+let running=false;
+$("scan").onclick=async()=>{
+  if(running)return; running=true;$("scan").disabled=true;$("serr").textContent="";$("sout").innerHTML="";
+  const syms=$("list").value.split(/[,\s]+/).map(s=>s.trim().toUpperCase()).filter(Boolean).slice(0,40);
+  const rows=[],bad=[];
+  for(let i=0;i<syms.length;i++){
+    $("prog").textContent=`Leggo ${syms[i]} (${i+1}/${syms.length})…`;
+    try{const r=await api(syms[i]);r.share=(r.call_premium+r.put_premium)>0?100*r.call_premium/(r.call_premium+r.put_premium):50;rows.push(r);saveSnap(r.asof,r);drawScan(rows,bad)}
+    catch(e){bad.push(syms[i]+": "+e.message);if(/Password|Troppe/.test(e.message)){break}}
+  }
+  $("prog").textContent=`Fatto: ${rows.length} titoli letti.`;drawScan(rows,bad);running=false;$("scan").disabled=false;
+};
+function drawScan(rows,bad){
+  const s=[...rows].sort((a,b)=>b.score-a.score||b.share-a.share);
+  let h=`<div class="card"><table><tr><th>Titolo</th><th>P/C vol</th><th>Premio call</th><th>Lettura</th><th>Vs prima</th></tr>`;
+  for(const r of s){
+    const c=r.label=="rialzista"?"ok":r.label=="ribassista"?"bad":"warn",p=prevSnap(r.asof,r.symbol);
+    const d=p&&r.pc_vol!=null&&p.v.pc!=null?(r.pc_vol-p.v.pc):null;
+    h+=`<tr class="click" onclick="tab(1);$('sym').value='${r.symbol}';go('${r.symbol}')"><td><b>${r.symbol}</b><br><span class="mut">${n2(r.spot)}</span></td><td>${n2(r.pc_vol)}</td><td>${r.share.toFixed(0)}%</td><td class="${c}">${r.label}</td><td>${d==null?"-":(d>0?"+":"")+n2(d)}<br><span class="mut">${p?p.d.slice(5):""}</span></td></tr>`;
+  }
+  h+=`</table><div class="mut">"Vs prima" = variazione del put/call rispetto all'ultimo giorno in cui hai fatto lo scanner su questo telefono. Lo storico vive nel browser: non è un archivio ufficiale. Tocca una riga per l'analisi.</div></div>`;
+  $("sout").innerHTML=h;$("serr").textContent=bad.length?"Non letti: "+bad.join(" | "):"";
+}
+init();
+</script>
+</body>
+</html>
