@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: optionslens
+    runtime: python
+    plan: free
+    buildCommand: echo "niente da installare"
+    startCommand: python server.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.3
+      - key: APP_PASSWORD
+        sync: false
