@@ -77,6 +77,20 @@ def gex_curve(cs, spot, asof):
     return out
 
 
+def gex_walls(cs, spot, asof):
+    """Muri 'stile calcolatore': lo strike con la maggiore gamma esposta (gamma x open interest), senza vincolo sopra/sotto il prezzo."""
+    call, put = {}, {}
+    for c in cs:
+        if c["oi"] <= 0 or c["iv"] <= 0:
+            continue
+        T = max((c["exp"] - asof).days, 0.5) / 365.0
+        g = bs_gamma(spot, c["k"], c["iv"], T) * c["oi"] * 100 * spot * spot * 0.01 / 1e6
+        (call if c["type"] == "C" else put)[c["k"]] = g
+    cw = max(call, key=call.get) if call else None
+    pw = max(put, key=put.get) if put else None
+    return cw, pw, round(sum(call.values()) - sum(put.values()), 1)
+
+
 def zero_gamma(curve, spot):
     """Prezzo in cui la gamma netta cambia segno (il più vicino al prezzo attuale), oppure None."""
     best = None
@@ -125,6 +139,7 @@ def analyse(doc, symbol):
             move = round(100 * st / spot, 2) if st > 0 else None
         cwall, pwall = walls(ec, spot)
         curve = gex_curve(ec, spot, asof)
+        gcw, gpw, gnet = gex_walls(ec, spot, asof)
         curves.append(curve)
         sd = None
         if atm_iv:
@@ -134,6 +149,7 @@ def analyse(doc, symbol):
                     "sd1_up": None if sd is None else round(spot + sd, 2), "sd1_dn": None if sd is None else round(spot - sd, 2),
                     "sd2_up": None if sd is None else round(spot + 2 * sd, 2), "sd2_dn": None if sd is None else round(spot - 2 * sd, 2),
                     "zero_gamma": zero_gamma(curve, spot),
+                    "gex_call_wall": gcw, "gex_put_wall": gpw, "gex_net": gnet,
                     "cvol": sum(c["vol"] for c in ec if c["type"] == "C"), "pvol": sum(c["vol"] for c in ec if c["type"] == "P"),
                     "coi": sum(c["oi"] for c in ec if c["type"] == "C"), "poi": sum(c["oi"] for c in ec if c["type"] == "P"),
                     "atm_iv": atm_iv, "move_pct": move, "max_pain": max_pain(ec)})
