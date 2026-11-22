@@ -3,81 +3,148 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0e1117">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <title>OptionsLens</title>
 <style>
-:root{--bg:#0e1117;--card:#171b24;--ink:#e6eaf2;--mut:#8b93a7;--ok:#3ddc97;--bad:#ff5c5c;--warn:#ffb020;--line:#2a3040}
+:root{--bg:#0e1117;--card:#171b24;--ink:#e6eaf2;--mut:#8b93a7;--ok:#3ddc97;--bad:#ff5c5c;--warn:#ffb020;--line:#2a3040;--field:#1f2430;--onok:#000}
+:root[data-theme=light]{--bg:#f3f5f9;--card:#fff;--ink:#141824;--mut:#5d667a;--ok:#0a9f66;--bad:#d93636;--warn:#b87400;--line:#dde2ec;--field:#eef1f6;--onok:#fff}
 *{box-sizing:border-box}
 body{margin:auto;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,sans-serif;padding:16px;max-width:760px}
-h1{font-size:22px;margin:4px 0 2px} .mut{color:var(--mut);font-size:13px}
+h1{font-size:22px;margin:4px 0 2px;display:flex;justify-content:space-between;align-items:center}
+h1 small{font-size:12px;color:var(--mut);font-weight:400} .mut{color:var(--mut);font-size:13px}
 .card{background:var(--card);border-radius:12px;padding:14px;margin:10px 0}
 label{display:block;color:var(--mut);font-size:12px;margin:10px 0 4px}
-input,textarea{width:100%;background:#1f2430;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:11px;font-size:16px;font-family:inherit}
-button{width:100%;background:var(--ok);color:#000;border:0;border-radius:10px;padding:13px;font-size:16px;font-weight:700;margin-top:12px}
-button:disabled{opacity:.5} .tabs{display:flex;gap:8px;margin:12px 0} .tabs button{margin:0;background:#1f2430;color:var(--ink)} .tabs button.on{background:var(--ok);color:#000}
+input,textarea,select{width:100%;background:var(--field);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:11px;font-size:16px;font-family:inherit}
+button{width:100%;background:var(--ok);color:var(--onok);border:0;border-radius:10px;padding:13px;font-size:16px;font-weight:700;margin-top:12px}
+button.sec{background:var(--field);color:var(--ink);font-weight:600}
+button:disabled{opacity:.5} .tabs{display:flex;gap:8px;margin:12px 0} .tabs button{margin:0;background:var(--field);color:var(--ink)} .tabs button.on{background:var(--ok);color:var(--onok)}
 .row{display:flex;justify-content:space-between;padding:4px 0;gap:10px} .row b{text-align:right}
 .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)}
 table{width:100%;border-collapse:collapse;font-size:13px} td,th{padding:6px 4px;text-align:right;border-bottom:1px solid var(--line)} th{color:var(--mut);font-weight:600} td:first-child,th:first-child{text-align:left}
-tr.click{cursor:pointer} .big{font-size:20px;font-weight:700} #err,#serr{color:var(--bad);margin-top:8px}
+tr.click{cursor:pointer} .big{font-size:20px;font-weight:700} #err,#serr{color:var(--bad);margin-top:8px;word-break:break-word}
 .bar{height:10px;border-radius:5px;background:var(--bad);overflow:hidden;margin:6px 0} .bar i{display:block;height:100%;background:var(--ok)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px} .chip{background:var(--field);border:1px solid var(--line);border-radius:16px;padding:5px 11px;font-size:13px;cursor:pointer}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px} .inl{display:flex;gap:8px;align-items:center} .inl button{width:auto;margin:0;padding:11px 14px}
+svg{width:100%;height:auto;display:block} .age{font-size:12px}
 </style>
 </head>
 <body>
-<h1>OptionsLens</h1>
-<div class="mut">Cosa fanno le opzioni di un titolo: volumi, premi, muri di open interest, attività insolita. Dati CBOE ritardati di circa 15 minuti, ultima sessione disponibile.</div>
+<h1><span>OptionsLens</span><small>v1.0 · <a href="#" id="thm" style="color:var(--mut)">tema</a></small></h1>
+<div class="mut">Cosa fanno le opzioni di un titolo: volumi, premi, muri di open interest, volatilità, attività insolita. Dati CBOE ritardati di circa 15 minuti, ultima sessione disponibile.</div>
 <div class="card" id="pwbox" style="display:none"><label>Password</label><input id="pw" type="password"></div>
 <div class="tabs"><button id="t1" class="on">Analisi</button><button id="t2">Scanner</button></div>
 
 <div id="p1">
-  <div class="card"><label>Titolo (es. AAPL, TSLA, SPY, SPX)</label><input id="sym" value="SPY" autocapitalize="characters">
-  <button id="go">Analizza</button><div id="err"></div></div>
+  <div class="card">
+    <label>Titolo (es. AAPL, TSLA, SPY, SPX)</label>
+    <div class="inl"><input id="sym" value="SPY" autocapitalize="characters"><button class="sec" id="fav" title="Preferito">☆</button></div>
+    <div class="chips" id="favchips"></div>
+    <button id="go">Analizza</button><div id="err"></div>
+  </div>
   <div id="out"></div>
 </div>
 
 <div id="p2" style="display:none">
-  <div class="card"><label>Titoli da scansionare (separati da virgola)</label><textarea id="list" rows="3"></textarea>
+  <div class="card"><label>Titoli da scansionare (separati da virgola, max 40)</label><textarea id="list" rows="3"></textarea>
+  <div class="g2"><button class="sec" id="usefav">Usa i preferiti</button><button class="sec" id="usedef">Lista base</button></div>
+  <label>Filtri sul risultato</label>
+  <div class="g2"><select id="fl"><option value="">Tutte le letture</option><option value="rialzista">Solo rialziste</option><option value="ribassista">Solo ribassiste</option></select>
+  <select id="fs"><option value="0">Premio call: qualsiasi</option><option value="60">Premio call ≥ 60%</option><option value="70">Premio call ≥ 70%</option><option value="-40">Premio call ≤ 40%</option><option value="-30">Premio call ≤ 30%</option></select></div>
+  <label><input type="checkbox" id="fu" style="width:auto"> solo con attività insolita</label>
   <button id="scan">Avvia scanner</button><div id="prog" class="mut"></div><div id="serr"></div></div>
   <div id="sout"></div>
 </div>
 
-<p class="mut"><b>Come leggerlo, onestamente:</b> i dati gratuiti dicono quanti contratti sono stati scambiati e a che prezzo, ma <b>non</b> se chi ha operato stava comprando o vendendo, né se apriva o chiudeva una posizione. La "lettura" (rialzista/ribassista) è quindi un indizio basato su proporzioni, non la prova di cosa fanno i grandi operatori: molte opzioni sono coperture o parti di strategie miste. Non è consulenza finanziaria; le opzioni possono azzerarsi.</p>
+<p class="mut"><b>Come leggerlo, onestamente:</b> i dati gratuiti dicono quanti contratti sono stati scambiati e a che prezzo, ma <b>non</b> se chi ha operato stava comprando o vendendo, né se apriva o chiudeva una posizione. La "lettura" (rialzista/ribassista) è quindi un indizio basato su proporzioni, non la prova di cosa fanno i grandi operatori: molte opzioni sono coperture o parti di strategie miste. Lo storico e i preferiti sono salvati in questo browser. Non è consulenza finanziaria; le opzioni possono azzerarsi.</p>
 
 <script>
 const $=id=>document.getElementById(id);
 const n0=x=>x==null?"n/d":Number(x).toLocaleString("it-IT",{maximumFractionDigits:0});
 const n2=x=>x==null?"n/d":Number(x).toLocaleString("it-IT",{minimumFractionDigits:2,maximumFractionDigits:2});
 const money=x=>{x=Math.abs(x);return x>=1e9?n2(x/1e9)+" mld $":x>=1e6?n2(x/1e6)+" mln $":n0(x/1e3)+" mila $"};
-let META={list:[]};
-function hdrs(){const h={};if(META.needs_password){h["X-Pass"]=$("pw").value;try{localStorage.setItem("ol_pw",$("pw").value)}catch(e){}}return h}
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+let META={list:[]}, LAST=null;
+function ls(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}}
+function lsset(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+
+/* tema */
+function applyTheme(t){document.documentElement.dataset.theme=t;document.querySelector('meta[name=theme-color]').content=t=="light"?"#f3f5f9":"#0e1117"}
+applyTheme(ls("ol_theme",matchMedia("(prefers-color-scheme: light)").matches?"light":"dark"));
+$("thm").onclick=e=>{e.preventDefault();const t=document.documentElement.dataset.theme=="light"?"dark":"light";lsset("ol_theme",t);applyTheme(t);if(LAST)show(LAST)};
+
+/* rete */
+function hdrs(){const h={};if(META.needs_password){h["X-Pass"]=$("pw").value;lsset("ol_pw",$("pw").value)}return h}
 async function viaPhone(sym){
-  // se il server è bloccato dalla CBOE, prova a scaricare i dati col telefono e a farli analizzare al server
   const s=sym.toUpperCase().replace("-",""), idx=["SPX","NDX","VIX","RUT","DJX","XSP"].includes(s)?"_"+s:s;
   let raw;
-  try{ const r=await fetch("https://cdn.cboe.com/api/global/delayed_quotes/options/"+idx+".json"); if(!r.ok) throw new Error("risposta "+r.status); raw=await r.text(); }
-  catch(e){ throw new Error("anche dal telefono la CBOE non risponde ("+e.message+")") }
+  try{const r=await fetch("https://cdn.cboe.com/api/global/delayed_quotes/options/"+idx+".json");if(!r.ok)throw new Error("risposta "+r.status);raw=await r.text()}
+  catch(e){throw new Error("anche dal telefono la CBOE non risponde ("+e.message+")")}
   const r2=await fetch("/api/analyse?symbol="+encodeURIComponent(sym),{method:"POST",headers:hdrs(),body:raw});
-  const j=await r2.json(); if(!r2.ok) throw new Error(j.error||"errore"); return j;
+  const j=await r2.json();if(!r2.ok)throw new Error(j.error||"errore");return j;
 }
 async function api(sym){
   const r=await fetch("/api/chain?symbol="+encodeURIComponent(sym),{headers:hdrs()});
   const j=await r.json();
-  if(r.ok) return j;
+  if(r.ok)return j;
   if(/403|CBOE|connessione/i.test(j.error||"")){
-    try{ return await viaPhone(sym) }catch(e){ throw new Error((j.error||"errore")+" | Tentativo dal telefono: "+e.message) }
+    try{return await viaPhone(sym)}catch(e){throw new Error((j.error||"errore")+" | Tentativo dal telefono: "+e.message)}
   }
   throw new Error(j.error||"errore");
 }
-async function init(){
-  try{META=await (await fetch("/api/meta")).json();}catch(e){$("err").textContent="Server non raggiungibile.";}
-  $("list").value=(META.list||[]).join(", ");
-  if(META.needs_password){$("pwbox").style.display="block";try{$("pw").value=localStorage.getItem("ol_pw")||""}catch(e){}}
-}
-function tab(i){$("p1").style.display=i==1?"":"none";$("p2").style.display=i==2?"":"none";$("t1").className=i==1?"on":"";$("t2").className=i==2?"on":""}
-$("t1").onclick=()=>tab(1);$("t2").onclick=()=>tab(2);
 
-function show(r){
+/* storico (nel browser) */
+function snaps(){return ls("ol_snap",{})}
+function saveSnap(r){const s=snaps();(s[r.asof]=s[r.asof]||{})[r.symbol]={pc:r.pc_vol,sh:r.share,sc:r.score,sp:r.spot};
+  const ks=Object.keys(s).sort();while(ks.length>90)delete s[ks.shift()];lsset("ol_snap",s)}
+function history(sym){const s=snaps();return Object.keys(s).sort().filter(d=>s[d][sym]).map(d=>({d,...s[d][sym]}))}
+function prevSnap(date,sym){const h=history(sym).filter(x=>x.d<date);return h.length?h[h.length-1]:null}
+
+/* preferiti */
+const favs=()=>ls("ol_favs",[]);
+function drawFavs(){
+  const f=favs(),s=$("sym").value.trim().toUpperCase();
+  $("fav").textContent=f.includes(s)?"★":"☆";
+  $("favchips").innerHTML=f.map(x=>`<span class="chip" data-s="${x}">${x}</span>`).join("")||'<span class="mut">Tocca ☆ per salvare un titolo tra i preferiti.</span>';
+  document.querySelectorAll("#favchips .chip").forEach(c=>c.onclick=()=>{$("sym").value=c.dataset.s;go()});
+}
+$("fav").onclick=()=>{const s=$("sym").value.trim().toUpperCase();if(!s)return;let f=favs();f=f.includes(s)?f.filter(x=>x!=s):[...f,s].slice(0,40);lsset("ol_favs",f);drawFavs()};
+$("sym").oninput=drawFavs;
+
+/* grafici */
+function scaleX(rows,W,P){const ks=rows.map(r=>r.k),a=Math.min(...ks),b=Math.max(...ks);let st=Infinity;for(let i=1;i<ks.length;i++)st=Math.min(st,ks[i]-ks[i-1]);
+  return {a,b,x:k=>P+(k-a)/((b-a)||1)*(W-P-10),bw:Math.max(2,Math.min(14,(st===Infinity?1:st)/((b-a)||1)*(W-P-10)*0.42))}}
+function xlabels(sc,rows,H,spot){let g="",step=Math.ceil(rows.length/6);rows.forEach((r,i)=>{if(i%step==0)g+=`<text x="${sc.x(r.k)}" y="${H-4}" fill="${css('--mut')}" font-size="11" text-anchor="middle">${r.k}</text>`});
+  if(spot>=sc.a&&spot<=sc.b)g+=`<line x1="${sc.x(spot)}" x2="${sc.x(spot)}" y1="8" y2="${H-20}" stroke="${css('--warn')}" stroke-dasharray="4 3"/><text x="${sc.x(spot)+3}" y="18" fill="${css('--warn')}" font-size="11">prezzo</text>`;return g}
+function oiChart(rows,spot,key){
+  rows=rows.filter(r=>Math.abs(r.k/spot-1)<=0.15);if(rows.length<3)return '<div class="mut">Pochi strike da mostrare.</div>';
+  const W=640,H=250,P=34,sc=scaleX(rows,W,P),ck=key=="oi"?"coi":"cvol",pk=key=="oi"?"poi":"pvol",mx=Math.max(...rows.map(r=>Math.max(r[ck],r[pk])),1),y=v=>H-22-(v/mx)*(H-44);
+  let g=`<text x="2" y="14" fill="${css('--mut')}" font-size="11">${n0(mx)}</text>`;
+  for(const r of rows){g+=`<rect x="${sc.x(r.k)-sc.bw}" y="${y(r[ck])}" width="${sc.bw}" height="${H-22-y(r[ck])}" fill="${css('--ok')}"/><rect x="${sc.x(r.k)}" y="${y(r[pk])}" width="${sc.bw}" height="${H-22-y(r[pk])}" fill="${css('--bad')}"/>`}
+  return `<svg viewBox="0 0 ${W} ${H}">${g}${xlabels(sc,rows,H,spot)}</svg>`}
+function smileChart(rows,spot){
+  rows=rows.filter(r=>Math.abs(r.k/spot-1)<=0.2);const pts=rows.filter(r=>r.civ||r.piv);if(pts.length<4)return '<div class="mut">Dati di volatilità insufficienti.</div>';
+  const W=640,H=230,P=34,sc=scaleX(rows,W,P),all=pts.flatMap(r=>[r.civ,r.piv]).filter(v=>v),lo=Math.min(...all),hi=Math.max(...all),y=v=>H-22-(v-lo)/((hi-lo)||1)*(H-44);
+  const path=k=>{let d="",on=false;for(const r of rows){const v=r[k];if(v){d+=(on?"L":"M")+sc.x(r.k).toFixed(1)+" "+y(v).toFixed(1);on=true}}return d};
+  return `<svg viewBox="0 0 ${W} ${H}"><text x="2" y="14" fill="${css('--mut')}" font-size="11">${n0(hi)}%</text><text x="2" y="${H-24}" fill="${css('--mut')}" font-size="11">${n0(lo)}%</text><path d="${path('civ')}" fill="none" stroke="${css('--ok')}" stroke-width="2"/><path d="${path('piv')}" fill="none" stroke="${css('--bad')}" stroke-width="2"/>${xlabels(sc,rows,H,spot)}</svg>`}
+function histChart(h){
+  if(h.length<2)return '<div class="mut">Serve almeno un secondo giorno di dati: rifai l\'analisi o lo scanner nei prossimi giorni e la linea compare qui.</div>';
+  const W=640,H=200,P=34,v=h.map(x=>x.pc).filter(x=>x!=null),hi=Math.max(...v,1.2),lo=Math.min(...v,0.6),x=i=>P+i/(h.length-1)*(W-P-10),y=a=>H-24-(a-lo)/((hi-lo)||1)*(H-44);
+  const d=h.map((p,i)=>p.pc==null?"":(i?"L":"M")+x(i).toFixed(1)+" "+y(p.pc).toFixed(1)).join("");
+  return `<svg viewBox="0 0 ${W} ${H}"><line x1="${P}" x2="${W-10}" y1="${y(1)}" y2="${y(1)}" stroke="${css('--line')}" stroke-dasharray="4 3"/><text x="2" y="${y(1)+4}" fill="${css('--mut')}" font-size="11">1,0</text><path d="${d}" fill="none" stroke="${css('--warn')}" stroke-width="2.2"/>`
+   +h.map((p,i)=>p.pc==null?"":`<circle cx="${x(i)}" cy="${y(p.pc)}" r="3" fill="${css('--warn')}"/>`).join("")
+   +`<text x="${P}" y="${H-6}" fill="${css('--mut')}" font-size="11">${h[0].d.slice(5)}</text><text x="${W-10}" y="${H-6}" fill="${css('--mut')}" font-size="11" text-anchor="end">${h[h.length-1].d.slice(5)}</text></svg><div class="mut">Put/call sui volumi: sopra 1 prevalgono le put, sotto 1 le call.</div>`}
+
+/* analisi */
+function ageText(r){if(!r.fetched)return "";const m=Math.round((Date.now()/1000-r.fetched)/60);return m<=0?"scaricati ora":m<60?`scaricati ${m} min fa`:`scaricati ${Math.round(m/60)} ore fa`}
+function show(r,saved){
+  LAST=r;
   const c=r.label=="rialzista"?"ok":r.label=="ribassista"?"bad":"warn";
   const share=(r.call_premium+r.put_premium)>0?100*r.call_premium/(r.call_premium+r.put_premium):50;
-  let h=`<div class="card"><div class="mut">${r.symbol} · ${n2(r.spot)} $ · dati del ${r.asof} (${r.ts||""}) · ${n0(r.contracts)} contratti</div>
+  const exps=Object.keys(r.by_exp||{}),sel=window.__exp&&exps.includes(window.__exp)?window.__exp:(exps.includes(r.near_exp)?r.near_exp:exps[0]);
+  let h=`<div class="card"><div class="mut">${r.symbol} · ${n2(r.spot)} $ · dati del ${r.asof} · ${n0(r.contracts)} contratti · <span class="age">${saved?"ultima analisi salvata (offline)":ageText(r)}</span></div>
    <div class="big ${c}">Lettura: ${r.label}</div>
    ${r.why.map(w=>`<div class="mut">• ${w}</div>`).join("")||'<div class="mut">Pochi scambi per trarre una lettura.</div>'}</div>`;
   h+=`<div class="card"><b>Chi sta scambiando cosa</b>
@@ -89,7 +156,15 @@ function show(r){
    <div class="bar"><i style="width:${share.toFixed(0)}%"></i></div><div class="mut">verde = quota di premio su call (${share.toFixed(0)}%)</div>
    <div class="row"><span>Skew (put - call, 25 delta, ~30 gg)</span><b>${r.skew==null?"n/d":(r.skew>0?"+":"")+n2(r.skew)+" pt"}</b></div>
    <div class="row"><span>Esposizione gamma stimata</span><b class="${r.gex>=0?"ok":"bad"}">${n0(r.gex)} mln $ / 1%</b></div>
-   <div class="mut">Gamma positiva: di solito i prezzi tendono a smorzarsi; negativa: i movimenti possono amplificarsi. È una stima con ipotesi forti.</div></div>`;
+   <div class="mut">Gamma positiva: di solito i prezzi tendono a smorzarsi; negativa: i movimenti possono amplificarsi. Stima con ipotesi forti.</div></div>`;
+  h+=`<div class="card"><b>Tendenza negli ultimi giorni</b>${histChart(history(r.symbol))}</div>`;
+  if(exps.length){
+    h+=`<div class="card"><b>Strike per scadenza</b><select id="expsel" style="margin-top:6px">${exps.map(e=>`<option ${e==sel?"selected":""}>${e}</option>`).join("")}</select>
+    <label>Open interest (contratti aperti) <span class="ok">■ call</span> <span class="bad">■ put</span></label>${oiChart(r.by_exp[sel],r.spot,"oi")}
+    <label>Volume di oggi <span class="ok">■ call</span> <span class="bad">■ put</span></label>${oiChart(r.by_exp[sel],r.spot,"vol")}
+    <label>Volatilità implicita per strike (smile) <span class="ok">■ call</span> <span class="bad">■ put</span></label>${smileChart(r.by_exp[sel],r.spot)}
+    <div class="mut">La linea tratteggiata è il prezzo attuale. Più alte sono le barre, più contratti ci sono a quello strike.</div></div>`;
+  }
   h+=`<div class="card"><b>Scadenze</b><table><tr><th>Scadenza</th><th>IV ATM</th><th>Mov. atteso</th><th>Max pain</th><th>P/C vol</th></tr>`
    +r.expiries.map(e=>`<tr><td>${e.exp}<br><span class="mut">${e.dte} gg</span></td><td>${e.atm_iv==null?"n/d":n2(e.atm_iv)+"%"}</td><td>${e.move_pct==null?"n/d":"±"+n2(e.move_pct)+"%"}</td><td>${e.max_pain==null?"n/d":n2(e.max_pain)}</td><td>${e.cvol?n2(e.pvol/e.cvol):"n/d"}</td></tr>`).join("")
    +`</table><div class="mut">Movimento atteso = costo dello straddle sul prezzo: quanto il mercato "paga" per un movimento fino a quella scadenza.</div></div>`;
@@ -100,40 +175,57 @@ function show(r){
   h+=`<div class="card"><b>Attività insolita</b> <span class="mut">(volume ≥ open interest, almeno 50.000 $ di premio)</span>`;
   h+=r.unusual.length?`<table><tr><th>Contratto</th><th>Vol</th><th>OI</th><th>Premio</th></tr>`+r.unusual.map(u=>`<tr><td>${u.type=="C"?"CALL":"PUT"} ${n2(u.k)}<br><span class="mut">${u.exp} · IV ${u.iv}%</span></td><td>${n0(u.vol)}</td><td>${n0(u.oi)}</td><td>${money(u.premium)}</td></tr>`).join("")+`</table>`:`<div class="mut">Nessun contratto fuori dall'ordinario.</div>`;
   $("out").innerHTML=h+`</div>`;
+  const es=$("expsel");if(es)es.onchange=()=>{window.__exp=es.value;show(LAST,saved)};
 }
 async function go(sym){
+  sym=(sym||$("sym").value).trim().toUpperCase();$("sym").value=sym;drawFavs();
   $("err").textContent="";$("go").disabled=true;$("go").textContent="Scarico…";
-  try{show(await api(sym||$("sym").value))}catch(e){$("err").textContent=e.message}
+  try{const r=await api(sym);r.share=(r.call_premium+r.put_premium)>0?100*r.call_premium/(r.call_premium+r.put_premium):50;saveSnap(r);lsset("ol_last_"+sym,r);window.__exp=null;show(r)}
+  catch(e){$("err").textContent=e.message;const old=ls("ol_last_"+sym,null);if(old){window.__exp=null;show(old,true)}}
   $("go").disabled=false;$("go").textContent="Analizza";
 }
 $("go").onclick=()=>go();
 
-function snaps(){try{return JSON.parse(localStorage.getItem("ol_snap")||"{}")}catch(e){return {}}}
-function saveSnap(date,row){try{const s=snaps();(s[date]=s[date]||{})[row.symbol]={pc:row.pc_vol,sh:row.share,sc:row.score};
-  const keys=Object.keys(s).sort();while(keys.length>30)delete s[keys.shift()];localStorage.setItem("ol_snap",JSON.stringify(s))}catch(e){}}
-function prevSnap(date,sym){const s=snaps();const ks=Object.keys(s).filter(k=>k<date).sort();for(let i=ks.length-1;i>=0;i--){if(s[ks[i]][sym])return {d:ks[i],v:s[ks[i]][sym]}}return null}
-let running=false;
+/* scanner */
+let running=false,ROWS=[],BAD=[];
+$("usefav").onclick=()=>{const f=favs();if(f.length)$("list").value=f.join(", ")};
+$("usedef").onclick=()=>{$("list").value=(META.list||[]).join(", ")};
+["fl","fs","fu"].forEach(i=>$(i).onchange=()=>drawScan());
 $("scan").onclick=async()=>{
-  if(running)return; running=true;$("scan").disabled=true;$("serr").textContent="";$("sout").innerHTML="";
+  if(running)return;running=true;$("scan").disabled=true;$("serr").textContent="";$("sout").innerHTML="";ROWS=[];BAD=[];
   const syms=$("list").value.split(/[,\s]+/).map(s=>s.trim().toUpperCase()).filter(Boolean).slice(0,40);
-  const rows=[],bad=[];
+  lsset("ol_list",$("list").value);
   for(let i=0;i<syms.length;i++){
     $("prog").textContent=`Leggo ${syms[i]} (${i+1}/${syms.length})…`;
-    try{const r=await api(syms[i]);r.share=(r.call_premium+r.put_premium)>0?100*r.call_premium/(r.call_premium+r.put_premium):50;rows.push(r);saveSnap(r.asof,r);drawScan(rows,bad)}
-    catch(e){bad.push(syms[i]+": "+e.message);if(/Password|Troppe/.test(e.message)){break}}
+    try{const r=await api(syms[i]);r.share=(r.call_premium+r.put_premium)>0?100*r.call_premium/(r.call_premium+r.put_premium):50;ROWS.push(r);saveSnap(r);drawScan()}
+    catch(e){BAD.push(syms[i]+": "+e.message);if(/Password|Troppe/.test(e.message))break}
   }
-  $("prog").textContent=`Fatto: ${rows.length} titoli letti.`;drawScan(rows,bad);running=false;$("scan").disabled=false;
+  $("prog").textContent=`Fatto: ${ROWS.length} titoli letti.`;drawScan();running=false;$("scan").disabled=false;
 };
-function drawScan(rows,bad){
-  const s=[...rows].sort((a,b)=>b.score-a.score||b.share-a.share);
-  let h=`<div class="card"><table><tr><th>Titolo</th><th>P/C vol</th><th>Premio call</th><th>Lettura</th><th>Vs prima</th></tr>`;
+function drawScan(){
+  const fl=$("fl").value,fs=Number($("fs").value),fu=$("fu").checked;
+  let s=ROWS.filter(r=>(!fl||r.label==fl)&&(!fs||(fs>0?r.share>=fs:r.share<=-fs))&&(!fu||r.unusual_count>0));
+  s.sort((a,b)=>b.score-a.score||b.share-a.share);
+  let h=`<div class="card"><div class="mut">${s.length} su ${ROWS.length} titoli dopo i filtri</div><table><tr><th>Titolo</th><th>P/C vol</th><th>Premio call</th><th>Lettura</th><th>Insolite</th><th>Vs prima</th></tr>`;
   for(const r of s){
     const c=r.label=="rialzista"?"ok":r.label=="ribassista"?"bad":"warn",p=prevSnap(r.asof,r.symbol);
-    const d=p&&r.pc_vol!=null&&p.v.pc!=null?(r.pc_vol-p.v.pc):null;
-    h+=`<tr class="click" onclick="tab(1);$('sym').value='${r.symbol}';go('${r.symbol}')"><td><b>${r.symbol}</b><br><span class="mut">${n2(r.spot)}</span></td><td>${n2(r.pc_vol)}</td><td>${r.share.toFixed(0)}%</td><td class="${c}">${r.label}</td><td>${d==null?"-":(d>0?"+":"")+n2(d)}<br><span class="mut">${p?p.d.slice(5):""}</span></td></tr>`;
+    const d=p&&r.pc_vol!=null&&p.pc!=null?(r.pc_vol-p.pc):null;
+    h+=`<tr class="click" data-s="${r.symbol}"><td><b>${r.symbol}</b><br><span class="mut">${n2(r.spot)}</span></td><td>${n2(r.pc_vol)}</td><td>${r.share.toFixed(0)}%</td><td class="${c}">${r.label}</td><td>${r.unusual_count||0}</td><td>${d==null?"-":(d>0?"+":"")+n2(d)}<br><span class="mut">${p?p.d.slice(5):""}</span></td></tr>`;
   }
-  h+=`</table><div class="mut">"Vs prima" = variazione del put/call rispetto all'ultimo giorno in cui hai fatto lo scanner su questo telefono. Lo storico vive nel browser: non è un archivio ufficiale. Tocca una riga per l'analisi.</div></div>`;
-  $("sout").innerHTML=h;$("serr").textContent=bad.length?"Non letti: "+bad.join(" | "):"";
+  h+=`</table><div class="mut">"Vs prima" = variazione del put/call rispetto all'ultimo giorno salvato su questo telefono. Tocca una riga per l'analisi completa.</div></div>`;
+  $("sout").innerHTML=h;$("serr").textContent=BAD.length?"Non letti: "+BAD.join(" | "):"";
+  document.querySelectorAll("#sout tr.click").forEach(t=>t.onclick=()=>{tab(1);go(t.dataset.s)});
+}
+
+function tab(i){$("p1").style.display=i==1?"":"none";$("p2").style.display=i==2?"":"none";$("t1").className=i==1?"on":"";$("t2").className=i==2?"on":""}
+$("t1").onclick=()=>tab(1);$("t2").onclick=()=>tab(2);
+
+async function init(){
+  try{META=await (await fetch("/api/meta")).json()}catch(e){$("err").textContent="Server non raggiungibile (se è fermo, aspetta un minuto e ricarica)."}
+  $("list").value=ls("ol_list",null)||(META.list||[]).join(", ");
+  if(META.needs_password){$("pwbox").style.display="block";$("pw").value=ls("ol_pw","")}
+  drawFavs();
+  if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
 }
 init();
 </script>

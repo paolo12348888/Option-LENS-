@@ -90,6 +90,19 @@ def analyse(doc, symbol):
     un.sort(key=lambda c: -c["vol"] * c["mid"])
     unusual = [{"sym": c["sym"], "type": c["type"], "k": c["k"], "exp": c["exp"].isoformat(), "vol": c["vol"], "oi": c["oi"],
                 "premium": round(c["vol"] * c["mid"] * 100), "iv": round(c["iv"] * 100, 1)} for c in un[:12]]
+    # dati per strike (grafici): solo gli strike entro il 25% dal prezzo, prime 6 scadenze
+    by_exp = {}
+    for e in exps[:6]:
+        rows = {}
+        for c in cs:
+            if c["exp"] != e or abs(c["k"] / spot - 1) > 0.25:
+                continue
+            r = rows.setdefault(c["k"], {"k": c["k"], "coi": 0, "poi": 0, "cvol": 0, "pvol": 0, "civ": None, "piv": None})
+            if c["type"] == "C":
+                r["coi"], r["cvol"], r["civ"] = c["oi"], c["vol"], (round(c["iv"] * 100, 1) if c["iv"] > 0 else None)
+            else:
+                r["poi"], r["pvol"], r["piv"] = c["oi"], c["vol"], (round(c["iv"] * 100, 1) if c["iv"] > 0 else None)
+        by_exp[e.isoformat()] = [rows[k] for k in sorted(rows)]
     # skew intorno a 30 giorni: IV put con delta ~ -0.25 meno IV call con delta ~ +0.25
     skew = None
     tgt = min(exps, key=lambda e: abs((e - asof).days - 30))
@@ -124,5 +137,5 @@ def analyse(doc, symbol):
             "call_premium": round(cprem), "put_premium": round(pprem),
             "expiries": per, "near_exp": near.isoformat(),
             "wall_calls": [{"k": c["k"], "oi": c["oi"]} for c in wall_c], "wall_puts": [{"k": c["k"], "oi": c["oi"]} for c in wall_p],
-            "unusual": unusual, "skew": skew, "gex": round(gex / 1e6, 1), "score": score, "label": label, "why": why,
+            "unusual": unusual, "unusual_count": len(un), "by_exp": by_exp, "skew": skew, "gex": round(gex / 1e6, 1), "score": score, "label": label, "why": why,
             "contracts": len(cs)}

@@ -66,6 +66,7 @@ def analyse_symbol(sym):
         if hit and time.time() - hit[0] < 300:
             return hit[1]
     res = opt.analyse(get_doc(sym), sym)
+    res["fetched"] = int(time.time())
     with CLOCK:
         if len(CACHE) > 300:
             CACHE.clear()
@@ -79,7 +80,9 @@ def analyse_doc(sym, doc):
         raise ValueError("Simbolo non valido.")
     if not isinstance(doc, dict):
         raise ValueError("Dati non validi.")
-    return opt.analyse(doc, sym)
+    res = opt.analyse(doc, sym)
+    res["fetched"] = int(time.time())
+    return res
 
 
 def too_many(ip):
@@ -131,6 +134,11 @@ class H(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             with open(os.path.join(HERE, "index.html"), "rb") as f:
                 return self.send(200, f.read(), "text/html; charset=utf-8")
+        static = {"/manifest.webmanifest": ("application/manifest+json", "manifest.webmanifest"), "/sw.js": ("text/javascript", "sw.js"),
+                  "/icon-192.png": ("image/png", "icon-192.png"), "/icon-512.png": ("image/png", "icon-512.png")}
+        if path in static:
+            with open(os.path.join(HERE, static[path][1]), "rb") as f:
+                return self.send(200, f.read(), static[path][0])
         if path == "/health":
             return self.send(200, "ok", "text/plain")
         if path == "/api/meta":

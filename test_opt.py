@@ -32,6 +32,14 @@ class T(unittest.TestCase):
         self.assertGreater(r["call_premium"], r["put_premium"])
         self.assertIn(r["label"], ("rialzista", "neutro / misto", "ribassista"))
 
+    def test_strikes(self):
+        r = opt.analyse(chain(), "XYZ")
+        rows = r["by_exp"]["2026-12-18"]
+        self.assertTrue(all(abs(x["k"] / 100 - 1) <= 0.25 for x in rows))
+        k110 = [x for x in rows if x["k"] == 110][0]
+        self.assertEqual(k110["coi"], 6000); self.assertEqual(k110["poi"], 1000)
+        self.assertGreaterEqual(r["unusual_count"], 1)
+
     def test_empty(self):
         with self.assertRaises(ValueError): opt.analyse({"data": {"current_price": 10, "options": []}}, "X")
 
