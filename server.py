@@ -43,7 +43,9 @@ def get_doc(sym):
     last = "errore sconosciuto"
     for i in range(2):
         try:
-            req = urllib.request.Request(cboe_url(sym), headers={"User-Agent": UA, "Accept": "application/json"})
+            req = urllib.request.Request(cboe_url(sym), headers={
+                "User-Agent": UA, "Accept": "application/json, text/plain, */*", "Accept-Language": "en-US,en;q=0.9",
+                "Referer": "https://www.cboe.com/", "Origin": "https://www.cboe.com"})
             return json.loads(urllib.request.urlopen(req, timeout=30).read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             if e.code in (403, 404):
@@ -71,6 +73,15 @@ def analyse_symbol(sym):
     return res
 
 
+def analyse_doc(sym, doc):
+    sym = sym.strip().upper()
+    if not SYMBOL.match(sym):
+        raise ValueError("Simbolo non valido.")
+    if not isinstance(doc, dict):
+        raise ValueError("Dati non validi.")
+    return opt.analyse(doc, sym)
+
+
 def too_many(ip):
     now = time.time()
     with HLOCK:
@@ -93,6 +104,27 @@ class H(BaseHTTPRequestHandler):
 
     def ip(self):
         return (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip()
+
+    def do_POST(self):
+        """Modalità telefono: la pagina scarica la catena dalla CBOE col tuo telefono e la manda qui per l'analisi."""
+        path, _, qs = self.path.partition("?")
+        if path != "/api/analyse":
+            return self.send(404, json.dumps({"error": "non trovato"}))
+        if PASSWORD and self.headers.get("X-Pass", "") != PASSWORD:
+            return self.send(401, json.dumps({"error": "Password errata."}))
+        if too_many(self.ip()):
+            return self.send(429, json.dumps({"error": "Troppe richieste: aspetta un minuto."}))
+        try:
+            n = int(self.headers.get("Content-Length", "0"))
+            if n > 30_000_000:
+                raise ValueError("Catena troppo grande per questo server (oltre 30 MB).")
+            m = re.search(r"(?:^|&)symbol=([^&]*)", qs)
+            doc = json.loads(self.rfile.read(n).decode("utf-8"))
+            self.send(200, json.dumps(analyse_doc(urllib.parse.unquote(m.group(1)) if m else "", doc)))
+        except ValueError as e:
+            self.send(400, json.dumps({"error": str(e)}))
+        except Exception as e:
+            self.send(500, json.dumps({"error": "Errore interno: %s" % type(e).__name__}))
 
     def do_GET(self):
         path, _, qs = self.path.partition("?")
