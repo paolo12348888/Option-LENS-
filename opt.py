@@ -77,20 +77,6 @@ def gex_curve(cs, spot, asof):
     return out
 
 
-def gex_walls(cs, spot, asof):
-    """Muri 'stile calcolatore': lo strike con la maggiore gamma esposta (gamma x open interest), senza vincolo sopra/sotto il prezzo."""
-    call, put = {}, {}
-    for c in cs:
-        if c["oi"] <= 0 or c["iv"] <= 0:
-            continue
-        T = max((c["exp"] - asof).days, 0.5) / 365.0
-        g = bs_gamma(spot, c["k"], c["iv"], T) * c["oi"] * 100 * spot * spot * 0.01 / 1e6
-        (call if c["type"] == "C" else put)[c["k"]] = g
-    cw = max(call, key=call.get) if call else None
-    pw = max(put, key=put.get) if put else None
-    return cw, pw, round(sum(call.values()) - sum(put.values()), 1)
-
-
 def zero_gamma(curve, spot):
     """Prezzo in cui la gamma netta cambia segno (il più vicino al prezzo attuale), oppure None."""
     best = None
@@ -104,10 +90,32 @@ def zero_gamma(curve, spot):
     return None if best is None else round(best, 2)
 
 
+def gex_of(c, spot):
+    """Esposizione gamma di un contratto in milioni di $ per un movimento dell'1% (gamma del feed x OI x 100 x prezzo^2 x 1%)."""
+    return c["gamma"] * c["oi"] * 100 * spot * spot * 0.01 / 1e6
+
+
 def walls(cs, spot):
-    cw = max((c for c in cs if c["type"] == "C" and c["k"] >= spot and c["oi"] > 0), key=lambda c: c["oi"], default=None)
-    pw = max((c for c in cs if c["type"] == "P" and c["k"] <= spot and c["oi"] > 0), key=lambda c: c["oi"], default=None)
-    return (cw["k"] if cw else None, pw["k"] if pw else None)
+    """Muri per GEX (gamma x open interest) e strike con più open interest. Si sommano i contratti con lo stesso strike (utile
+    quando si uniscono più scadenze). Lo strike al denaro è compreso."""
+    agg = {}
+    for c in cs:
+        if c["oi"] <= 0:
+            continue
+        a = agg.setdefault((c["type"], c["k"]), [0, 0.0])
+        a[0] += c["oi"]; a[1] += gex_of(c, spot)
+    ks = sorted({k for _, k in agg})
+    lo = [k for k in ks if k <= spot]; hi = [k for k in ks if k >= spot]
+    alo = lo[-1] if lo else spot; ahi = hi[0] if hi else spot
+    calls = {k: v for (t, k), v in agg.items() if t == "C" and k >= alo}
+    puts = {k: v for (t, k), v in agg.items() if t == "P" and k <= ahi}
+
+    def top(d, i):
+        return max(d, key=lambda k: d[k][i]) if d else None
+    cw, pw, co, po = top(calls, 1), top(puts, 1), top(calls, 0), top(puts, 0)
+    return {"call_wall": cw, "put_wall": pw,
+            "call_oi_top": None if co is None else {"k": co, "oi": calls[co][0]},
+            "put_oi_top": None if po is None else {"k": po, "oi": puts[po][0]}}
 
 
 def ratio(a, b):
@@ -137,25 +145,27 @@ def analyse(doc, symbol):
             atm_iv = round(100 * sum(ivs) / len(ivs), 1) if ivs else None
             st = calls[k]["mid"] + puts[k]["mid"]
             move = round(100 * st / spot, 2) if st > 0 else None
-        cwall, pwall = walls(ec, spot)
+        w = walls(ec, spot)
+        cwall, pwall = w["call_wall"], w["put_wall"]
         curve = gex_curve(ec, spot, asof)
-        gcw, gpw, gnet = gex_walls(ec, spot, asof)
+        gnet = round(sum((1 if c['type'] == 'C' else -1) * gex_of(c, spot) for c in ec), 1)
         curves.append(curve)
         sd = None
         if atm_iv:
             sd = spot * (atm_iv / 100.0) * math.sqrt(max((e - asof).days, 0.5) / 365.0)   # 1 deviazione standard in $
         per.append({"exp": e.isoformat(), "dte": (e - asof).days, "call_wall": cwall, "put_wall": pwall,
+                    "call_oi_top": w["call_oi_top"], "put_oi_top": w["put_oi_top"],
                     "sd1": None if sd is None else round(sd, 2),
                     "sd1_up": None if sd is None else round(spot + sd, 2), "sd1_dn": None if sd is None else round(spot - sd, 2),
                     "sd2_up": None if sd is None else round(spot + 2 * sd, 2), "sd2_dn": None if sd is None else round(spot - 2 * sd, 2),
                     "zero_gamma": zero_gamma(curve, spot),
-                    "gex_call_wall": gcw, "gex_put_wall": gpw, "gex_net": gnet,
+                    "gex_net": gnet,
                     "cvol": sum(c["vol"] for c in ec if c["type"] == "C"), "pvol": sum(c["vol"] for c in ec if c["type"] == "P"),
                     "coi": sum(c["oi"] for c in ec if c["type"] == "C"), "poi": sum(c["oi"] for c in ec if c["type"] == "P"),
                     "atm_iv": atm_iv, "move_pct": move, "max_pain": max_pain(ec)})
     tot = [c for c in cs if c["exp"] in set(exps[:10])]
-    tcw, tpw = walls(tot, spot)
-    totals = {"call_wall": tcw, "put_wall": tpw, "max_pain": max_pain(tot), "zero_gamma": zero_gamma([sum(v) for v in zip(*curves)], spot) if curves else None}
+    tw = walls(tot, spot)
+    totals = {"call_wall": tw["call_wall"], "put_wall": tw["put_wall"], "call_oi_top": tw["call_oi_top"], "put_oi_top": tw["put_oi_top"], "max_pain": max_pain(tot), "zero_gamma": zero_gamma([sum(v) for v in zip(*curves)], spot) if curves else None}
     # muri di open interest sulla prima scadenza con almeno 5 giorni (o la prima)
     near = next((e for e in exps if (e - asof).days >= 5), exps[0])
     nc = [c for c in cs if c["exp"] == near]
@@ -173,11 +183,13 @@ def analyse(doc, symbol):
         for c in cs:
             if c["exp"] != e or abs(c["k"] / spot - 1) > 0.25:
                 continue
-            r = rows.setdefault(c["k"], {"k": c["k"], "coi": 0, "poi": 0, "cvol": 0, "pvol": 0, "civ": None, "piv": None})
+            r = rows.setdefault(c["k"], {"k": c["k"], "coi": 0, "poi": 0, "cvol": 0, "pvol": 0, "civ": None, "piv": None, "cg": 0.0, "pg": 0.0})
             if c["type"] == "C":
                 r["coi"], r["cvol"], r["civ"] = c["oi"], c["vol"], (round(c["iv"] * 100, 1) if c["iv"] > 0 else None)
+                r["cg"] = round(gex_of(c, spot), 3)
             else:
                 r["poi"], r["pvol"], r["piv"] = c["oi"], c["vol"], (round(c["iv"] * 100, 1) if c["iv"] > 0 else None)
+                r["pg"] = round(-gex_of(c, spot), 3)
         by_exp[e.isoformat()] = [rows[k] for k in sorted(rows)]
     # skew intorno a 30 giorni: IV put con delta ~ -0.25 meno IV call con delta ~ +0.25
     skew = None
