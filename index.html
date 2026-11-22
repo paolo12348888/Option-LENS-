@@ -137,6 +137,39 @@ function histChart(h){
    +h.map((p,i)=>p.pc==null?"":`<circle cx="${x(i)}" cy="${y(p.pc)}" r="3" fill="${css('--warn')}"/>`).join("")
    +`<text x="${P}" y="${H-6}" fill="${css('--mut')}" font-size="11">${h[0].d.slice(5)}</text><text x="${W-10}" y="${H-6}" fill="${css('--mut')}" font-size="11" text-anchor="end">${h[h.length-1].d.slice(5)}</text></svg><div class="mut">Put/call sui volumi: sopra 1 prevalgono le put, sotto 1 le call.</div>`}
 
+
+/* variazione di open interest tra un giorno e l'altro (dati salvati in questo browser, solo dall'Analisi) */
+const OIKEEP=7,OISYMS=25;
+function oiStore(){return ls("ol_oi",{})}
+function oiRows(r){const o={};for(const [e,rows] of Object.entries(r.by_exp||{})){o[e]=rows.filter(x=>Math.abs(x.k/r.spot-1)<=0.15).map(x=>[x.k,x.coi,x.poi,x.cvol,x.pvol])}return o}
+function oiCompare(r){
+  const st=oiStore()[r.symbol]||{},ds=Object.keys(st).filter(d=>d<r.asof).sort();
+  if(!ds.length)return null;
+  const prev=ds[ds.length-1],cur=oiRows(r),old=st[prev],out=[];let dc=0,dp=0,same=0,n=0;
+  for(const [e,rows] of Object.entries(cur)){
+    const om=old[e];if(!om)continue;const map=new Map(om.map(x=>[x[0],x]));
+    for(const x of rows){const o=map.get(x[0]);if(!o)continue;
+      const c=x[1]-o[1],p=x[2]-o[2];dc+=c;dp+=p;n++;if(c===0&&p===0)same++;
+      out.push({e,k:x[0],t:"C",oi0:o[1],oi1:x[1],d:c,vol:o[3]});out.push({e,k:x[0],t:"P",oi0:o[2],oi1:x[2],d:p,vol:o[4]})}}
+  return {prev,dc,dp,n,stale:n>0&&same===n,rows:out.filter(x=>Math.abs(x.d)>=100).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d)).slice(0,10)};
+}
+function oiSave(r){
+  const all=oiStore(),s=all[r.symbol]||{};s[r.asof]=oiRows(r);
+  const ds=Object.keys(s).sort();while(ds.length>OIKEEP)delete s[ds.shift()];
+  delete all[r.symbol];all[r.symbol]=s;                       // l'ultimo usato va in fondo
+  const ks=Object.keys(all);while(ks.length>OISYMS)delete all[ks.shift()];
+  try{localStorage.setItem("ol_oi",JSON.stringify(all))}catch(e){try{lsset("ol_oi",{[r.symbol]:s})}catch(e2){}}
+}
+function oiCard(c){
+  if(!c)return `<div class="card"><b>Variazione open interest</b><div class="mut">Non ho ancora un giorno precedente di questo titolo. Rifai l'analisi in un'altra giornata di borsa: l'open interest si aggiorna una volta al giorno, quindi il confronto compare dal giorno dopo.</div></div>`;
+  if(c.stale)return `<div class="card"><b>Variazione open interest</b><div class="mut">Rispetto al ${c.prev} l'open interest risulta identico: probabilmente non è ancora stato aggiornato per oggi (di solito avviene prima dell'apertura) o i dati sono dello stesso giorno. Riprova più tardi.</div></div>`;
+  const rd=x=>{const v=Math.max(100,0.5*x.vol);return x.d>=v?["aperture nette","ok"]:x.d<=-v?["chiusure nette","bad"]:["misto","warn"]};
+  let h=`<div class="card"><b>Variazione open interest</b> <span class="mut">(confronto con il ${c.prev}: mostra cosa è cambiato dopo la seduta di quel giorno)</span>
+   <div class="row"><span>Contratti call aperti</span><b class="${c.dc>=0?"ok":"bad"}">${c.dc>0?"+":""}${n0(c.dc)}</b></div>
+   <div class="row"><span>Contratti put aperti</span><b class="${c.dp>=0?"ok":"bad"}">${c.dp>0?"+":""}${n0(c.dp)}</b></div>`;
+  h+=c.rows.length?`<table><tr><th>Contratto</th><th>OI prima → ora</th><th>Var.</th><th>Lettura</th></tr>`+c.rows.map(x=>{const [t,cl]=rd(x);return `<tr><td>${x.t=="C"?"CALL":"PUT"} ${n2(x.k)}<br><span class="mut">${x.e}</span></td><td>${n0(x.oi0)} → ${n0(x.oi1)}<br><span class="mut">vol ${n0(x.vol)}</span></td><td class="${x.d>=0?"ok":"bad"}">${x.d>0?"+":""}${n0(x.d)}</td><td class="${cl}">${t}</td></tr>`}).join("")+`</table>`:`<div class="mut">Nessun contratto con variazione di almeno 100.</div>`;
+  return h+`<div class="mut">"Aperture nette": l'open interest è salito almeno di metà del volume di quel giorno, quindi molti contratti sembrano nuovi. "Chiusure nette": è sceso di altrettanto. Resta un'inferenza: non si sa chi ha comprato o venduto, e una scadenza passata fa sparire contratti senza che siano stati "chiusi".</div></div>`}
+
 /* analisi */
 function ageText(r){if(!r.fetched)return "";const m=Math.round((Date.now()/1000-r.fetched)/60);return m<=0?"scaricati ora":m<60?`scaricati ${m} min fa`:`scaricati ${Math.round(m/60)} ore fa`}
 function show(r,saved){
@@ -158,6 +191,7 @@ function show(r,saved){
    <div class="row"><span>Esposizione gamma stimata</span><b class="${r.gex>=0?"ok":"bad"}">${n0(r.gex)} mln $ / 1%</b></div>
    <div class="mut">Gamma positiva: di solito i prezzi tendono a smorzarsi; negativa: i movimenti possono amplificarsi. Stima con ipotesi forti.</div></div>`;
   h+=`<div class="card"><b>Tendenza negli ultimi giorni</b>${histChart(history(r.symbol))}</div>`;
+  h+=saved?"":oiCard(oiCompare(r));
   if(exps.length){
     h+=`<div class="card"><b>Strike per scadenza</b><select id="expsel" style="margin-top:6px">${exps.map(e=>`<option ${e==sel?"selected":""}>${e}</option>`).join("")}</select>
     <label>Open interest (contratti aperti) <span class="ok">■ call</span> <span class="bad">■ put</span></label>${oiChart(r.by_exp[sel],r.spot,"oi")}
@@ -180,7 +214,7 @@ function show(r,saved){
 async function go(sym){
   sym=(sym||$("sym").value).trim().toUpperCase();$("sym").value=sym;drawFavs();
   $("err").textContent="";$("go").disabled=true;$("go").textContent="Scarico…";
-  try{const r=await api(sym);r.share=(r.call_premium+r.put_premium)>0?100*r.call_premium/(r.call_premium+r.put_premium):50;saveSnap(r);lsset("ol_last_"+sym,r);window.__exp=null;show(r)}
+  try{const r=await api(sym);r.share=(r.call_premium+r.put_premium)>0?100*r.call_premium/(r.call_premium+r.put_premium):50;saveSnap(r);lsset("ol_last_"+sym,r);window.__exp=null;show(r);oiSave(r)}
   catch(e){$("err").textContent=e.message;const old=ls("ol_last_"+sym,null);if(old){window.__exp=null;show(old,true)}}
   $("go").disabled=false;$("go").textContent="Analizza";
 }

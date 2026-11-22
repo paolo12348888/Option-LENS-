@@ -65,7 +65,7 @@ def analyse(doc, symbol):
     pprem = sum(c["vol"] * c["mid"] * 100 for c in cs if c["type"] == "P")
     exps = sorted({c["exp"] for c in cs})
     per = []
-    for e in exps[:6]:
+    for e in exps[:10]:
         ec = [c for c in cs if c["exp"] == e]
         calls = {c["k"]: c for c in ec if c["type"] == "C"}; puts = {c["k"]: c for c in ec if c["type"] == "P"}
         both = sorted(set(calls) & set(puts), key=lambda k: abs(k - spot))
@@ -92,7 +92,7 @@ def analyse(doc, symbol):
                 "premium": round(c["vol"] * c["mid"] * 100), "iv": round(c["iv"] * 100, 1)} for c in un[:12]]
     # dati per strike (grafici): solo gli strike entro il 25% dal prezzo, prime 6 scadenze
     by_exp = {}
-    for e in exps[:6]:
+    for e in exps[:10]:
         rows = {}
         for c in cs:
             if c["exp"] != e or abs(c["k"] / spot - 1) > 0.25:
