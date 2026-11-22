@@ -97,7 +97,7 @@ async function api(sym){
 
 /* storico (nel browser) */
 function snaps(){return ls("ol_snap",{})}
-function saveSnap(r){const s=snaps();(s[r.asof]=s[r.asof]||{})[r.symbol]={pc:r.pc_vol,sh:r.share,sc:r.score,sp:r.spot};
+function saveSnap(r){const s=snaps(),dd=r.trade_date||r.asof;(s[dd]=s[dd]||{})[r.symbol]={pc:r.pc_vol,sh:r.share,sc:r.score,sp:r.spot};
   const ks=Object.keys(s).sort();while(ks.length>90)delete s[ks.shift()];lsset("ol_snap",s)}
 function history(sym){const s=snaps();return Object.keys(s).sort().filter(d=>s[d][sym]).map(d=>({d,...s[d][sym]}))}
 function prevSnap(date,sym){const h=history(sym).filter(x=>x.d<date);return h.length?h[h.length-1]:null}
@@ -167,9 +167,9 @@ function oiSave(r){
 }
 function oiCard(c){
   if(!c)return `<div class="card"><b>Variazione open interest</b><div class="mut">Non ho ancora un giorno precedente di questo titolo. Rifai l'analisi in un'altra giornata di borsa: l'open interest si aggiorna una volta al giorno, quindi il confronto compare dal giorno dopo.</div></div>`;
-  if(c.stale)return `<div class="card"><b>Variazione open interest</b><div class="mut">Rispetto al ${c.prev} l'open interest risulta identico: probabilmente non è ancora stato aggiornato per oggi (di solito avviene prima dell'apertura) o i dati sono dello stesso giorno. Riprova più tardi.</div></div>`;
+  if(c.stale)return `<div class="card"><b>Variazione open interest</b><div class="mut">Rispetto all'analisi del ${c.prev} l'open interest risulta identico. Nel fine settimana e nei festivi non cambia; in un giorno di borsa si aggiorna una volta, di notte, quindi riprova più tardi o domani.</div></div>`;
   const rd=x=>{const v=Math.max(100,0.5*x.vol);return x.d>=v?["aperture nette","ok"]:x.d<=-v?["chiusure nette","bad"]:["misto","warn"]};
-  let h=`<div class="card"><b>Variazione open interest</b> <span class="mut">(confronto con il ${c.prev}: mostra cosa è cambiato dopo la seduta di quel giorno)</span>
+  let h=`<div class="card"><b>Variazione open interest</b> <span class="mut">(confronto con l'analisi del ${c.prev}: contratti aperti in più o in meno da allora)</span>
    <div class="row"><span>Contratti call aperti</span><b class="${c.dc>=0?"ok":"bad"}">${c.dc>0?"+":""}${n0(c.dc)}</b></div>
    <div class="row"><span>Contratti put aperti</span><b class="${c.dp>=0?"ok":"bad"}">${c.dp>0?"+":""}${n0(c.dp)}</b></div>`;
   h+=c.rows.length?`<table><tr><th>Contratto</th><th>OI prima → ora</th><th>Var.</th><th>Lettura</th></tr>`+c.rows.map(x=>{const [t,cl]=rd(x);return `<tr><td>${x.t=="C"?"CALL":"PUT"} ${n2(x.k)}<br><span class="mut">${x.e}</span></td><td>${n0(x.oi0)} → ${n0(x.oi1)}<br><span class="mut">vol ${n0(x.vol)}</span></td><td class="${x.d>=0?"ok":"bad"}">${x.d>0?"+":""}${n0(x.d)}</td><td class="${cl}">${t}</td></tr>`}).join("")+`</table>`:`<div class="mut">Nessun contratto con variazione di almeno 100.</div>`;
@@ -182,6 +182,14 @@ function strikeTable(rows,spot,lv){
   const body=near.map(x=>`<tr${Math.abs(x.k-spot)<=0.5*(near.length>1?Math.abs(near[1].k-near[0].k):1)?' style="background:var(--field)"':""}><td><b>${n2(x.k)}</b>${tag[x.k]?`<br><span class="warn">${tag[x.k].join(", ")}</span>`:""}</td><td>${n0(x.coi)}</td><td>${n0(x.cvol)}</td><td>${n0(x.poi)}</td><td>${n0(x.pvol)}</td><td class="${(x.cg+x.pg)>=0?"ok":"bad"}">${n2(x.cg+x.pg)}</td></tr>`).join("");
   return `<details style="margin-top:10px"><summary style="cursor:pointer"><b>Tabella strike con volumi e open interest</b> <span class="mut">(±15% dal prezzo)</span></summary><div style="overflow-x:auto"><table><tr><th>Strike</th><th>Call OI</th><th>Call vol</th><th>Put OI</th><th>Put vol</th><th>GEX netto</th></tr>${body}</table></div><div class="mut">OI = contratti aperti a fine giornata precedente (si aggiorna una volta al giorno). Vol = contratti scambiati oggi finora (ritardo di circa 15 minuti). GEX netto in milioni di $ per 1%: call positivo, put negativo. Riga evidenziata = strike più vicino al prezzo.</div></details>`}
 
+function wcell(v,vin,spot,e){
+  if(v==null)return "n/d";
+  const d=(v/spot-1)*100;let s=n2(v)+`<br><span class="mut">${d>0?"+":""}${n2(d)}%</span>`;
+  if(e&&e.sd1_up!=null){const out=v>e.sd1_up||v<e.sd1_dn;
+    if(vin!=null&&vin!==v)s+=`<br><span class="warn">in ±1σ: ${n2(vin)}</span>`;
+    else if(out&&vin==null)s+=`<br><span class="warn">nessuno in ±1σ</span>`}
+  return s}
+
 /* analisi */
 function ageText(r){if(!r.fetched)return "";const m=Math.round((Date.now()/1000-r.fetched)/60);return m<=0?"scaricati ora":m<60?`scaricati ${m} min fa`:`scaricati ${Math.round(m/60)} ore fa`}
 function show(r,saved){
@@ -189,7 +197,7 @@ function show(r,saved){
   const c=r.label=="rialzista"?"ok":r.label=="ribassista"?"bad":"warn";
   const share=(r.call_premium+r.put_premium)>0?100*r.call_premium/(r.call_premium+r.put_premium):50;
   const exps=Object.keys(r.by_exp||{}),sel=window.__exp&&exps.includes(window.__exp)?window.__exp:(exps.includes(r.near_exp)?r.near_exp:exps[0]);
-  let h=`<div class="card"><div class="mut">${r.symbol} · ${n2(r.spot)} $ · dati del ${r.asof} · ${n0(r.contracts)} contratti · <span class="age">${saved?"ultima analisi salvata (offline)":ageText(r)}</span></div>
+  let h=`<div class="card"><div class="mut">${r.symbol} · ${n2(r.spot)} $ · seduta del ${r.trade_date||r.asof} · ${n0(r.contracts)} contratti · <span class="age">${saved?"ultima analisi salvata (offline)":ageText(r)}</span></div>
    <div class="big ${c}">Lettura: ${r.label}</div>
    ${r.why.map(w=>`<div class="mut">• ${w}</div>`).join("")||'<div class="mut">Pochi scambi per trarre una lettura.</div>'}</div>`;
   h+=`<div class="card"><b>Chi sta scambiando cosa</b>
@@ -212,9 +220,9 @@ function show(r,saved){
     <label>Volatilità implicita per strike (smile) <span class="ok">■ call</span> <span class="bad">■ put</span></label>${smileChart(r.by_exp[sel],r.spot,LV)}
     <div class="mut">Linee: <span style="color:#ff5c5c">put wall</span>, <span style="color:#3ddc97">call wall</span>, <span style="color:#9b8cff">max pain</span>, <span style="color:#4ea8ff">zero gamma</span>, <span style="color:#c9a227">±1σ</span> e <span style="color:#b0b8c9">±2σ</span> (puntini); tratteggiata gialla = prezzo attuale. Più alte sono le barre, più contratti ci sono a quello strike.</div>${strikeTable(r.by_exp[sel],r.spot,LV)}</div>`;
   }
-  {const L=(r.expiries||[]).map(e=>`<tr><td>${e.exp.slice(5)}<br><span class="mut">${e.dte} gg</span></td><td class="bad">${e.put_wall==null?"n/d":n2(e.put_wall)}</td><td class="ok">${e.call_wall==null?"n/d":n2(e.call_wall)}</td><td>${e.max_pain==null?"n/d":n2(e.max_pain)}</td><td>${e.zero_gamma==null?"n/d":n2(e.zero_gamma)}</td></tr>`).join(""),T=r.totals||{};
-  h+=`<div class="card"><b>Livelli per scadenza</b><table><tr><th>Scadenza</th><th>Put wall</th><th>Call wall</th><th>Max pain</th><th>Zero γ</th></tr>${L}<tr><td><b>Tutte</b><br><span class="mut">${(r.expiries||[]).length} scad.</span></td><td class="bad">${T.put_wall==null?"n/d":n2(T.put_wall)}</td><td class="ok">${T.call_wall==null?"n/d":n2(T.call_wall)}</td><td>${T.max_pain==null?"n/d":n2(T.max_pain)}</td><td>${T.zero_gamma==null?"n/d":n2(T.zero_gamma)}</td></tr></table>
-  <div class="mut">Definizioni complete in fondo alla pagina. <b>Put/Call wall</b>: strike con più <b>gamma × open interest</b> sul lato put (fino allo strike al denaro) e sul lato call (dallo strike al denaro in su): è lì che la copertura di chi fa mercato pesa di più. <b>Max pain</b>: calcolato su tutta la catena. <b>Zero γ</b>: n/d = nessun passaggio per zero entro ±15%.</div></div>`}
+  {const L=(r.expiries||[]).map(e=>`<tr><td>${e.exp.slice(5)}<br><span class="mut">${e.dte} gg</span></td><td class="bad">${wcell(e.put_wall,e.put_wall_in,r.spot,e)}</td><td class="ok">${wcell(e.call_wall,e.call_wall_in,r.spot,e)}</td><td>${e.max_pain==null?"n/d":n2(e.max_pain)}</td><td>${e.zero_gamma==null?"n/d":n2(e.zero_gamma)}</td></tr>`).join(""),T=r.totals||{};
+  h+=`<div class="card"><b>Livelli per scadenza</b><table><tr><th>Scadenza</th><th>Put wall</th><th>Call wall</th><th>Max pain</th><th>Zero γ</th></tr>${L}<tr><td><b>Tutte</b><br><span class="mut">${(r.expiries||[]).length} scad.</span></td><td class="bad">${wcell(T.put_wall,null,r.spot,null)}</td><td class="ok">${wcell(T.call_wall,null,r.spot,null)}</td><td>${T.max_pain==null?"n/d":n2(T.max_pain)}</td><td>${T.zero_gamma==null?"n/d":n2(T.zero_gamma)}</td></tr></table>
+  <div class="mut">Definizioni complete in fondo alla pagina. <b>Put/Call wall</b>: strike con più <b>gamma × open interest</b> sul lato put (fino allo strike al denaro) e sul lato call (dallo strike al denaro in su): è lì che la copertura di chi fa mercato pesa di più. Sotto ogni muro c'è la distanza dal prezzo; se il muro è fuori dalla fascia ±1σ, sotto compare quello più vicino <b>dentro</b> la fascia (la zona dove il prezzo arriva più spesso). <b>Max pain</b>: calcolato su tutta la catena. <b>Zero γ</b>: n/d = nessun passaggio per zero entro ±15%.</div></div>`}
   {const G=(r.expiries||[]).map(e=>`<tr><td>${e.exp.slice(5)}<br><span class="mut">${e.dte} gg</span></td><td class="bad">${e.put_oi_top?n2(e.put_oi_top.k)+"<br><span class='mut'>"+n0(e.put_oi_top.oi)+"</span>":"n/d"}</td><td class="ok">${e.call_oi_top?n2(e.call_oi_top.k)+"<br><span class='mut'>"+n0(e.call_oi_top.oi)+"</span>":"n/d"}</td><td class="${e.gex_net>=0?"ok":"bad"}">${e.gex_net==null?"n/d":n2(e.gex_net)}</td></tr>`).join(""),T2=r.totals||{};
   h+=`<div class="card"><b>Strike con più contratti aperti e GEX netto</b><table><tr><th>Scadenza</th><th>Più put aperte</th><th>Più call aperte</th><th>GEX netto mln $</th></tr>${G}<tr><td><b>Tutte</b></td><td class="bad">${T2.put_oi_top?n2(T2.put_oi_top.k)+"<br><span class='mut'>"+n0(T2.put_oi_top.oi)+"</span>":"n/d"}</td><td class="ok">${T2.call_oi_top?n2(T2.call_oi_top.k)+"<br><span class='mut'>"+n0(T2.call_oi_top.oi)+"</span>":"n/d"}</td><td>-</td></tr></table>
   <div class="mut">Qui si conta solo quanti contratti sono aperti, senza pesare la gamma: sono strike importanti ma, se lontani dal prezzo, contano poco per le coperture. Sotto ogni strike c'è il numero di contratti. GEX netto = gamma delle call meno gamma delle put, in milioni di $ per un movimento dell'1%.</div></div>`}
@@ -232,6 +240,7 @@ function show(r,saved){
   <p><b>Volume</b>: contratti scambiati oggi, con un ritardo di circa 15 minuti. Un volume alto con OI invariato indica scambi oggi; si vede se sono aperture o chiusure solo l'OI del giorno dopo.</p>
   <p><b>GEX di uno strike</b>: gamma × open interest × 100 × prezzo² × 1%, in milioni di $. Le call contano positivo, le put negativo, con l'ipotesi classica che i clienti comprino e chi fa mercato venda. La gamma di ogni contratto è quella del feed CBOE.</p>
   <p><b>Call wall</b>: tra gli strike dallo strike al denaro in su, quello con più GEX delle call. <b>Put wall</b>: tra gli strike fino allo strike al denaro, quello con più GEX delle put. Sono i livelli dove le coperture di chi fa mercato pesano di più; la gamma è massima vicino al prezzo, quindi i muri tendono a stare vicini.</p>
+  <p><b>Come usare i muri per operare</b>: il muro sulla catena intera è il livello "vero" ma può essere lontano dal prezzo (per esempio +30%): in quel caso ha poco valore operativo a breve. Per questo sotto compare anche quello entro ±1σ. Se i due coincidono, il livello è sia importante sia raggiungibile.</p>
   <p><b>Strike con più contratti aperti</b>: conta solo l'OI, senza gamma. Può essere lontano dal prezzo; è un'altra cosa rispetto al muro.</p>
   <p><b>Max pain</b>: lo strike a cui il valore totale a scadenza di tutte le opzioni aperte (call e put, su <b>tutta</b> la catena della scadenza) è minimo. Se si leggono solo pochi strike intorno al prezzo, il risultato viene falsato verso il centro.</p>
   <p><b>Zero gamma</b>: prezzo in cui il GEX netto cambia segno, ricalcolando la gamma di ogni contratto per prezzi da -15% a +15% (Black-Scholes con la volatilità del contratto). "n/d" se non c'è passaggio per zero in quella fascia.</p>
@@ -272,7 +281,7 @@ function drawScan(){
   s.sort((a,b)=>b.score-a.score||b.share-a.share);
   let h=`<div class="card"><div class="mut">${s.length} su ${ROWS.length} titoli dopo i filtri</div><table><tr><th>Titolo</th><th>P/C vol</th><th>Premio call</th><th>Lettura</th><th>Insolite</th><th>Vs prima</th></tr>`;
   for(const r of s){
-    const c=r.label=="rialzista"?"ok":r.label=="ribassista"?"bad":"warn",p=prevSnap(r.asof,r.symbol);
+    const c=r.label=="rialzista"?"ok":r.label=="ribassista"?"bad":"warn",p=prevSnap(r.trade_date||r.asof,r.symbol);
     const d=p&&r.pc_vol!=null&&p.pc!=null?(r.pc_vol-p.pc):null;
     h+=`<tr class="click" data-s="${r.symbol}"><td><b>${r.symbol}</b><br><span class="mut">${n2(r.spot)}</span></td><td>${n2(r.pc_vol)}</td><td>${r.share.toFixed(0)}%</td><td class="${c}">${r.label}</td><td>${r.unusual_count||0}</td><td>${d==null?"-":(d>0?"+":"")+n2(d)}<br><span class="mut">${p?p.d.slice(5):""}</span></td></tr>`;
   }

@@ -12,6 +12,26 @@ def f(x, d=0.0):
         return d
 
 
+def _date_of(x):
+    try:
+        return datetime.date.fromisoformat(str(x)[:10])
+    except ValueError:
+        return None
+
+
+# Giorni di borsa chiusa NYSE 2026-2027 (oltre ai fine settimana)
+HOLIDAYS = {datetime.date(*d) for d in [
+    (2026, 1, 1), (2026, 1, 19), (2026, 2, 16), (2026, 4, 3), (2026, 5, 25), (2026, 6, 19), (2026, 7, 3), (2026, 9, 7), (2026, 11, 26), (2026, 12, 25),
+    (2027, 1, 1), (2027, 1, 18), (2027, 2, 15), (2027, 3, 26), (2027, 5, 31), (2027, 6, 18), (2027, 7, 5), (2027, 9, 6), (2027, 11, 25), (2027, 12, 24)]}
+
+
+def last_session(d):
+    """Ultima giornata di borsa aperta fino al giorno d compreso."""
+    while d.weekday() >= 5 or d in HOLIDAYS:
+        d -= datetime.timedelta(days=1)
+    return d
+
+
 def parse_chain(doc):
     """Documento CBOE -> (spot, data_di_riferimento, contratti)."""
     data = doc.get("data") or {}
@@ -35,7 +55,8 @@ def parse_chain(doc):
         mid = (bid + ask) / 2 if bid > 0 and ask > 0 else last
         out.append({"exp": exp, "type": m.group(3), "k": int(m.group(4)) / 1000.0, "bid": bid, "ask": ask, "mid": mid,
                     "iv": f(o.get("iv")), "oi": int(f(o.get("open_interest"))), "vol": int(f(o.get("volume"))),
-                    "delta": f(o.get("delta")), "gamma": f(o.get("gamma")), "sym": o.get("option")})
+                    "delta": f(o.get("delta")), "gamma": f(o.get("gamma")), "sym": o.get("option"),
+                    "ltt": _date_of(o.get("last_trade_time"))})
     return spot, asof, out
 
 
@@ -122,8 +143,14 @@ def ratio(a, b):
     return None if b == 0 else round(a / b, 2)
 
 
-def analyse(doc, symbol):
-    spot, asof, cs = parse_chain(doc)
+def analyse(doc, symbol, today=None):
+    spot, ts_date, cs = parse_chain(doc)
+    # La data del file CBOE è quella in cui è stato generato, non della seduta: nel fine settimana indica sabato/domenica.
+    # La seduta vera è l'ultimo scambio registrato nei contratti; se manca, l'ultimo giorno di borsa aperta.
+    ltts = [c["ltt"] for c in cs if c["ltt"] and c["vol"] > 0 and c["ltt"] <= ts_date]
+    trade_date = max(ltts) if ltts else last_session(ts_date)
+    # I giorni alla scadenza si contano da oggi (se i dati sono di venerdì e siamo domenica, mancano due giorni in meno).
+    asof = max(trade_date, today or datetime.date.today())
     if spot <= 0 or not cs:
         raise ValueError("La catena di opzioni di %s è vuota o non valida." % symbol)
     cs = [c for c in cs if c["exp"] >= asof]
@@ -153,7 +180,9 @@ def analyse(doc, symbol):
         sd = None
         if atm_iv:
             sd = spot * (atm_iv / 100.0) * math.sqrt(max((e - asof).days, 0.5) / 365.0)   # 1 deviazione standard in $
+        win = walls([c for c in ec if abs(c["k"] - spot) <= sd], spot) if sd else None   # muri solo entro ±1σ
         per.append({"exp": e.isoformat(), "dte": (e - asof).days, "call_wall": cwall, "put_wall": pwall,
+                    "call_wall_in": win["call_wall"] if win else None, "put_wall_in": win["put_wall"] if win else None,
                     "call_oi_top": w["call_oi_top"], "put_oi_top": w["put_oi_top"],
                     "sd1": None if sd is None else round(sd, 2),
                     "sd1_up": None if sd is None else round(spot + sd, 2), "sd1_dn": None if sd is None else round(spot - sd, 2),
@@ -220,7 +249,7 @@ def analyse(doc, symbol):
         if skew > 8: score -= 1; why.append("le put costano molto più delle call (skew %+.1f punti): cautela" % skew)
         elif skew < 2: score += 1; why.append("skew basso (%+.1f): poca paura di ribassi" % skew)
     label = "rialzista" if score >= 2 else "ribassista" if score <= -2 else "neutro / misto"
-    return {"symbol": symbol, "spot": round(spot, 2), "asof": asof.isoformat(), "ts": doc.get("timestamp"),
+    return {"symbol": symbol, "spot": round(spot, 2), "asof": ts_date.isoformat(), "trade_date": trade_date.isoformat(), "ref": asof.isoformat(), "ts": doc.get("timestamp"),
             "pc_vol": pcv, "pc_oi": ratio(po, co), "cvol": cv, "pvol": pv, "coi": co, "poi": po,
             "call_premium": round(cprem), "put_premium": round(pprem),
             "expiries": per, "totals": totals, "near_exp": near.isoformat(),
