@@ -249,10 +249,31 @@ def analyse(doc, symbol, today=None):
         if skew > 8: score -= 1; why.append("le put costano molto più delle call (skew %+.1f punti): cautela" % skew)
         elif skew < 2: score += 1; why.append("skew basso (%+.1f): poca paura di ribassi" % skew)
     label = "rialzista" if score >= 2 else "ribassista" if score <= -2 else "neutro / misto"
+    # --- Modalità intraday: solo gli strike vicini al prezzo, scadenze entro 7 giorni (max 5) ---
+    intraday = None
+    iv_front = next((p["atm_iv"] for p in per if p["atm_iv"]), None)
+    daily = spot * (iv_front / 100.0) * math.sqrt(1 / 252.0) if iv_front else spot * 0.01     # 1 deviazione standard di un giorno di borsa
+    wpct = min(max(2 * daily / spot, 0.02), 0.10)                                               # finestra: ±2σ giornaliere, tra 2% e 10%
+    lo_k, hi_k = spot * (1 - wpct), spot * (1 + wpct)
+    irows = []
+    for p in ([x for x in per if x["dte"] <= 7][:5] or per[:1]):
+        e = datetime.date.fromisoformat(p["exp"])
+        ec = [c for c in cs if c["exp"] == e and lo_k <= c["k"] <= hi_k]
+        if not ec:
+            continue
+        w = walls(ec, spot)
+        irows.append({"exp": p["exp"], "dte": p["dte"], "call_wall": w["call_wall"], "put_wall": w["put_wall"],
+                      "call_oi_top": w["call_oi_top"], "put_oi_top": w["put_oi_top"],
+                      "gex_net": round(sum((1 if c["type"] == "C" else -1) * gex_of(c, spot) for c in ec), 1),
+                      "zero_gamma": zero_gamma(gex_curve(ec, spot, asof), spot), "max_pain_full": p["max_pain"]})
+    if irows:
+        intraday = {"window_pct": round(wpct * 100, 1), "lo": round(lo_k, 2), "hi": round(hi_k, 2), "daily_sd": round(daily, 2), "iv": iv_front,
+                    "sd1_dn": round(spot - daily, 2), "sd1_up": round(spot + daily, 2), "sd2_dn": round(spot - 2 * daily, 2), "sd2_up": round(spot + 2 * daily, 2),
+                    "rows": irows}
     return {"symbol": symbol, "spot": round(spot, 2), "asof": ts_date.isoformat(), "trade_date": trade_date.isoformat(), "ref": asof.isoformat(), "ts": doc.get("timestamp"),
             "pc_vol": pcv, "pc_oi": ratio(po, co), "cvol": cv, "pvol": pv, "coi": co, "poi": po,
             "call_premium": round(cprem), "put_premium": round(pprem),
-            "expiries": per, "totals": totals, "near_exp": near.isoformat(),
+            "expiries": per, "totals": totals, "intraday": intraday, "near_exp": near.isoformat(),
             "wall_calls": [{"k": c["k"], "oi": c["oi"]} for c in wall_c], "wall_puts": [{"k": c["k"], "oi": c["oi"]} for c in wall_p],
             "unusual": unusual, "unusual_count": len(un), "by_exp": by_exp, "skew": skew, "gex": round(gex / 1e6, 1), "score": score, "label": label, "why": why,
             "contracts": len(cs)}

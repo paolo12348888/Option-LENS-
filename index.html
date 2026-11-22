@@ -190,6 +190,27 @@ function wcell(v,vin,spot,e){
     else if(out&&vin==null)s+=`<br><span class="warn">nessuno in ±1σ</span>`}
   return s}
 
+let MODE=ls("ol_mode","full");
+function setMode(m){MODE=m;lsset("ol_mode",m);if(LAST)show(LAST)}
+function modeCard(){
+  return `<div class="card"><b>Tipo di lettura dei livelli</b>
+  <div class="tabs" style="margin:8px 0 4px"><button class="${MODE=="intra"?"on":""}" onclick="setMode('intra')">Intraday<br><span style="font-weight:400;font-size:12px">strike vicini</span></button><button class="${MODE=="full"?"on":""}" onclick="setMode('full')">Catena completa<br><span style="font-weight:400;font-size:12px">lungo termine</span></button></div>
+  <div class="mut">${MODE=="intra"?"Intraday: solo scadenze entro 7 giorni e strike vicini al prezzo. È la lettura giusta per chi opera nella giornata, ma i livelli valgono <b>dentro la finestra</b> indicata.":"Catena completa: tutti gli strike e tutte le scadenze (le prime 10). È la lettura di riferimento per i livelli \"veri\"."}</div></div>`}
+function intraCards(r){
+  const I=r.intraday,sp=r.spot;
+  const rows=I.rows.map(e=>`<tr><td>${e.exp.slice(5)}<br><span class="mut">${e.dte} gg</span></td><td class="bad">${e.put_wall==null?"n/d":n2(e.put_wall)}<br><span class="mut">${e.put_wall==null?"":n2((e.put_wall/sp-1)*100)+"%"}</span></td><td class="ok">${e.call_wall==null?"n/d":n2(e.call_wall)}<br><span class="mut">${e.call_wall==null?"":"+"+n2((e.call_wall/sp-1)*100)+"%"}</span></td><td>${e.max_pain_full==null?"n/d":n2(e.max_pain_full)}</td><td>${e.zero_gamma==null?"n/d":n2(e.zero_gamma)}</td></tr>`).join("");
+  const rows2=I.rows.map(e=>`<tr><td>${e.exp.slice(5)}</td><td class="bad">${e.put_oi_top?n2(e.put_oi_top.k)+"<br><span class='mut'>"+n0(e.put_oi_top.oi)+"</span>":"n/d"}</td><td class="ok">${e.call_oi_top?n2(e.call_oi_top.k)+"<br><span class='mut'>"+n0(e.call_oi_top.oi)+"</span>":"n/d"}</td><td class="${e.gex_net>=0?"ok":"bad"}">${n2(e.gex_net)}</td></tr>`).join("");
+  return `<div class="card"><b>Livelli intraday</b> <span class="mut">(finestra ±${n2(I.window_pct)}%: da ${n2(I.lo)} a ${n2(I.hi)})</span>
+  <table><tr><th>Scadenza</th><th>Put wall</th><th>Call wall</th><th>Max pain*</th><th>Zero γ</th></tr>${rows}</table>
+  <div class="mut">*Il max pain è sempre calcolato sulla <b>catena intera</b>, perché con pochi strike verrebbe falsato verso il centro. Put wall, call wall e zero gamma sono calcolati solo sugli strike della finestra: la finestra è pari a due deviazioni standard di una giornata di borsa (tra 2% e 10% del prezzo), calcolata sulla volatilità implicita della prima scadenza. Scadenze: entro 7 giorni, al massimo 5.</div></div>
+  <div class="card"><b>Fascia di un giorno</b> <span class="mut">(IV ${I.iv==null?"n/d":n2(I.iv)+"%"}, 1 giorno di borsa)</span>
+  <div class="row"><span>±1σ</span><b>${n2(I.sd1_dn)} – ${n2(I.sd1_up)}</b></div>
+  <div class="row"><span>±2σ</span><b>${n2(I.sd2_dn)} – ${n2(I.sd2_up)}</b></div>
+  <div class="mut">Prezzo × IV × √(1/252). Entro ±1σ resta circa il 68% delle giornate, entro ±2σ circa il 95%, se la volatilità implicita è giusta: i gap e le notizie fanno eccezione.</div></div>
+  <div class="card"><b>Strike con più contratti aperti e GEX netto</b> <span class="mut">(solo nella finestra)</span>
+  <table><tr><th>Scadenza</th><th>Più put aperte</th><th>Più call aperte</th><th>GEX netto mln $</th></tr>${rows2}</table>
+  <div class="mut">GEX netto = gamma delle call meno gamma delle put sugli strike della finestra, in milioni di $ per 1%.</div></div>`}
+
 /* analisi */
 function ageText(r){if(!r.fetched)return "";const m=Math.round((Date.now()/1000-r.fetched)/60);return m<=0?"scaricati ora":m<60?`scaricati ${m} min fa`:`scaricati ${Math.round(m/60)} ore fa`}
 function show(r,saved){
@@ -220,12 +241,15 @@ function show(r,saved){
     <label>Volatilità implicita per strike (smile) <span class="ok">■ call</span> <span class="bad">■ put</span></label>${smileChart(r.by_exp[sel],r.spot,LV)}
     <div class="mut">Linee: <span style="color:#ff5c5c">put wall</span>, <span style="color:#3ddc97">call wall</span>, <span style="color:#9b8cff">max pain</span>, <span style="color:#4ea8ff">zero gamma</span>, <span style="color:#c9a227">±1σ</span> e <span style="color:#b0b8c9">±2σ</span> (puntini); tratteggiata gialla = prezzo attuale. Più alte sono le barre, più contratti ci sono a quello strike.</div>${strikeTable(r.by_exp[sel],r.spot,LV)}</div>`;
   }
+  h+=modeCard();
+  if(MODE=="intra"&&r.intraday){h+=intraCards(r)}else{
   {const L=(r.expiries||[]).map(e=>`<tr><td>${e.exp.slice(5)}<br><span class="mut">${e.dte} gg</span></td><td class="bad">${wcell(e.put_wall,e.put_wall_in,r.spot,e)}</td><td class="ok">${wcell(e.call_wall,e.call_wall_in,r.spot,e)}</td><td>${e.max_pain==null?"n/d":n2(e.max_pain)}</td><td>${e.zero_gamma==null?"n/d":n2(e.zero_gamma)}</td></tr>`).join(""),T=r.totals||{};
   h+=`<div class="card"><b>Livelli per scadenza</b><table><tr><th>Scadenza</th><th>Put wall</th><th>Call wall</th><th>Max pain</th><th>Zero γ</th></tr>${L}<tr><td><b>Tutte</b><br><span class="mut">${(r.expiries||[]).length} scad.</span></td><td class="bad">${wcell(T.put_wall,null,r.spot,null)}</td><td class="ok">${wcell(T.call_wall,null,r.spot,null)}</td><td>${T.max_pain==null?"n/d":n2(T.max_pain)}</td><td>${T.zero_gamma==null?"n/d":n2(T.zero_gamma)}</td></tr></table>
   <div class="mut">Definizioni complete in fondo alla pagina. <b>Put/Call wall</b>: strike con più <b>gamma × open interest</b> sul lato put (fino allo strike al denaro) e sul lato call (dallo strike al denaro in su): è lì che la copertura di chi fa mercato pesa di più. Sotto ogni muro c'è la distanza dal prezzo; se il muro è fuori dalla fascia ±1σ, sotto compare quello più vicino <b>dentro</b> la fascia (la zona dove il prezzo arriva più spesso). <b>Max pain</b>: calcolato su tutta la catena. <b>Zero γ</b>: n/d = nessun passaggio per zero entro ±15%.</div></div>`}
   {const G=(r.expiries||[]).map(e=>`<tr><td>${e.exp.slice(5)}<br><span class="mut">${e.dte} gg</span></td><td class="bad">${e.put_oi_top?n2(e.put_oi_top.k)+"<br><span class='mut'>"+n0(e.put_oi_top.oi)+"</span>":"n/d"}</td><td class="ok">${e.call_oi_top?n2(e.call_oi_top.k)+"<br><span class='mut'>"+n0(e.call_oi_top.oi)+"</span>":"n/d"}</td><td class="${e.gex_net>=0?"ok":"bad"}">${e.gex_net==null?"n/d":n2(e.gex_net)}</td></tr>`).join(""),T2=r.totals||{};
   h+=`<div class="card"><b>Strike con più contratti aperti e GEX netto</b><table><tr><th>Scadenza</th><th>Più put aperte</th><th>Più call aperte</th><th>GEX netto mln $</th></tr>${G}<tr><td><b>Tutte</b></td><td class="bad">${T2.put_oi_top?n2(T2.put_oi_top.k)+"<br><span class='mut'>"+n0(T2.put_oi_top.oi)+"</span>":"n/d"}</td><td class="ok">${T2.call_oi_top?n2(T2.call_oi_top.k)+"<br><span class='mut'>"+n0(T2.call_oi_top.oi)+"</span>":"n/d"}</td><td>-</td></tr></table>
   <div class="mut">Qui si conta solo quanti contratti sono aperti, senza pesare la gamma: sono strike importanti ma, se lontani dal prezzo, contano poco per le coperture. Sotto ogni strike c'è il numero di contratti. GEX netto = gamma delle call meno gamma delle put, in milioni di $ per un movimento dell'1%.</div></div>`}
+  }
   {const S=(r.expiries||[]).map(e=>`<tr><td>${e.exp.slice(5)}<br><span class="mut">${e.dte} gg</span></td><td>${e.sd2_dn==null?"n/d":n2(e.sd2_dn)}</td><td>${e.sd1_dn==null?"n/d":n2(e.sd1_dn)}</td><td>${e.sd1_up==null?"n/d":n2(e.sd1_up)}</td><td>${e.sd2_up==null?"n/d":n2(e.sd2_up)}</td></tr>`).join("");
   h+=`<div class="card"><b>Prima e seconda deviazione standard</b><table><tr><th>Scadenza</th><th>-2σ</th><th>-1σ</th><th>+1σ</th><th>+2σ</th></tr>${S}</table>
   <div class="mut">Fasce di prezzo che il mercato, tramite la volatilità implicita (IV al denaro), considera plausibili fino a quella scadenza: prezzo × IV × √(giorni/365). Entro ±1σ dovrebbe stare circa il 68% dei casi, entro ±2σ circa il 95%, <b>se</b> la volatilità implicita è giusta e i prezzi seguono una curva a campana, cosa che nei crolli e nei gap non succede. Sono riferimenti statistici, non previsioni.</div></div>`}
@@ -246,6 +270,7 @@ function show(r,saved){
   <p><b>Zero gamma</b>: prezzo in cui il GEX netto cambia segno, ricalcolando la gamma di ogni contratto per prezzi da -15% a +15% (Black-Scholes con la volatilità del contratto). "n/d" se non c'è passaggio per zero in quella fascia.</p>
   <p><b>±1σ e ±2σ</b>: prezzo × IV al denaro × √(giorni/365), sopra e sotto il prezzo (68% e 95% se la IV fosse giusta).</p>
   <p><b>Tutte</b>: le prime 10 scadenze insieme (strike sommati).</p>
+  <p><b>Modalità intraday</b>: considera solo le scadenze entro 7 giorni (al massimo 5) e gli strike entro ±2σ di una giornata di borsa dal prezzo (tra 2% e 10%). Serve a vedere i livelli che contano nella giornata, ma i risultati valgono solo dentro quella finestra; il max pain resta sulla catena intera.</p>
   <p>Tutti questi livelli sono riferimenti basati su dati ritardati e su ipotesi: non sono previsioni né consulenza finanziaria.</p></div></details></div>`;
   $("out").innerHTML=h+`</div>`+DEF;
   const es=$("expsel");if(es)es.onchange=()=>{window.__exp=es.value;show(LAST,saved)};
