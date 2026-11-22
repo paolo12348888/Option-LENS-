@@ -116,19 +116,24 @@ $("sym").oninput=drawFavs;
 /* grafici */
 function scaleX(rows,W,P){const ks=rows.map(r=>r.k),a=Math.min(...ks),b=Math.max(...ks);let st=Infinity;for(let i=1;i<ks.length;i++)st=Math.min(st,ks[i]-ks[i-1]);
   return {a,b,x:k=>P+(k-a)/((b-a)||1)*(W-P-10),bw:Math.max(2,Math.min(14,(st===Infinity?1:st)/((b-a)||1)*(W-P-10)*0.42))}}
-function xlabels(sc,rows,H,spot){let g="",step=Math.ceil(rows.length/6);rows.forEach((r,i)=>{if(i%step==0)g+=`<text x="${sc.x(r.k)}" y="${H-4}" fill="${css('--mut')}" font-size="11" text-anchor="middle">${r.k}</text>`});
-  if(spot>=sc.a&&spot<=sc.b)g+=`<line x1="${sc.x(spot)}" x2="${sc.x(spot)}" y1="8" y2="${H-20}" stroke="${css('--warn')}" stroke-dasharray="4 3"/><text x="${sc.x(spot)+3}" y="18" fill="${css('--warn')}" font-size="11">prezzo</text>`;return g}
-function oiChart(rows,spot,key){
+const LVC={pw:"#ff5c5c",cw:"#3ddc97",mp:"#9b8cff",zg:"#4ea8ff",s1:"#c9a227",s2:"#b0b8c9"};
+function levels(e){return e?[["pw",e.put_wall,"Put wall"],["cw",e.call_wall,"Call wall"],["mp",e.max_pain,"Max pain"],["zg",e.zero_gamma,"Zero γ"],["s1",e.sd1_dn,"-1σ"],["s1",e.sd1_up,"+1σ"],["s2",e.sd2_dn,"-2σ"],["s2",e.sd2_up,"+2σ"]].filter(x=>x[1]!=null).map(x=>({id:x[0],k:x[1],label:x[2]})):[]}
+function xlabels(sc,rows,H,spot,lv){let g="",step=Math.ceil(rows.length/6);rows.forEach((r,i)=>{if(i%step==0)g+=`<text x="${sc.x(r.k)}" y="${H-4}" fill="${css('--mut')}" font-size="11" text-anchor="middle">${r.k}</text>`});
+  if(spot>=sc.a&&spot<=sc.b)g+=`<line x1="${sc.x(spot)}" x2="${sc.x(spot)}" y1="8" y2="${H-20}" stroke="${css('--warn')}" stroke-dasharray="4 3"/><text x="${sc.x(spot)+3}" y="18" fill="${css('--warn')}" font-size="11">prezzo</text>`;
+  (lv||[]).forEach((l,i)=>{if(l.k<sc.a||l.k>sc.b)return;const x=sc.x(l.k),y=30+i*12,c=LVC[l.id],anc=x>400?"end":"start";
+    const dash=(l.id=="s1"||l.id=="s2")?' stroke-dasharray="2 3"':"";g+=`<line x1="${x}" x2="${x}" y1="8" y2="${H-20}" stroke="${c}" stroke-width="1.6"${dash}/><text x="${anc=="end"?x-3:x+3}" y="${y}" fill="${c}" font-size="11" text-anchor="${anc}">${l.label} ${l.k}</text>`});
+  return g}
+function oiChart(rows,spot,key,lv){
   rows=rows.filter(r=>Math.abs(r.k/spot-1)<=0.15);if(rows.length<3)return '<div class="mut">Pochi strike da mostrare.</div>';
   const W=640,H=250,P=34,sc=scaleX(rows,W,P),ck=key=="oi"?"coi":"cvol",pk=key=="oi"?"poi":"pvol",mx=Math.max(...rows.map(r=>Math.max(r[ck],r[pk])),1),y=v=>H-22-(v/mx)*(H-44);
   let g=`<text x="2" y="14" fill="${css('--mut')}" font-size="11">${n0(mx)}</text>`;
   for(const r of rows){g+=`<rect x="${sc.x(r.k)-sc.bw}" y="${y(r[ck])}" width="${sc.bw}" height="${H-22-y(r[ck])}" fill="${css('--ok')}"/><rect x="${sc.x(r.k)}" y="${y(r[pk])}" width="${sc.bw}" height="${H-22-y(r[pk])}" fill="${css('--bad')}"/>`}
-  return `<svg viewBox="0 0 ${W} ${H}">${g}${xlabels(sc,rows,H,spot)}</svg>`}
-function smileChart(rows,spot){
+  return `<svg viewBox="0 0 ${W} ${H}">${g}${xlabels(sc,rows,H,spot,lv)}</svg>`}
+function smileChart(rows,spot,lv){
   rows=rows.filter(r=>Math.abs(r.k/spot-1)<=0.2);const pts=rows.filter(r=>r.civ||r.piv);if(pts.length<4)return '<div class="mut">Dati di volatilità insufficienti.</div>';
   const W=640,H=230,P=34,sc=scaleX(rows,W,P),all=pts.flatMap(r=>[r.civ,r.piv]).filter(v=>v),lo=Math.min(...all),hi=Math.max(...all),y=v=>H-22-(v-lo)/((hi-lo)||1)*(H-44);
   const path=k=>{let d="",on=false;for(const r of rows){const v=r[k];if(v){d+=(on?"L":"M")+sc.x(r.k).toFixed(1)+" "+y(v).toFixed(1);on=true}}return d};
-  return `<svg viewBox="0 0 ${W} ${H}"><text x="2" y="14" fill="${css('--mut')}" font-size="11">${n0(hi)}%</text><text x="2" y="${H-24}" fill="${css('--mut')}" font-size="11">${n0(lo)}%</text><path d="${path('civ')}" fill="none" stroke="${css('--ok')}" stroke-width="2"/><path d="${path('piv')}" fill="none" stroke="${css('--bad')}" stroke-width="2"/>${xlabels(sc,rows,H,spot)}</svg>`}
+  return `<svg viewBox="0 0 ${W} ${H}"><text x="2" y="14" fill="${css('--mut')}" font-size="11">${n0(hi)}%</text><text x="2" y="${H-24}" fill="${css('--mut')}" font-size="11">${n0(lo)}%</text><path d="${path('civ')}" fill="none" stroke="${css('--ok')}" stroke-width="2"/><path d="${path('piv')}" fill="none" stroke="${css('--bad')}" stroke-width="2"/>${xlabels(sc,rows,H,spot,lv)}</svg>`}
 function histChart(h){
   if(h.length<2)return '<div class="mut">Serve almeno un secondo giorno di dati: rifai l\'analisi o lo scanner nei prossimi giorni e la linea compare qui.</div>';
   const W=640,H=200,P=34,v=h.map(x=>x.pc).filter(x=>x!=null),hi=Math.max(...v,1.2),lo=Math.min(...v,0.6),x=i=>P+i/(h.length-1)*(W-P-10),y=a=>H-24-(a-lo)/((hi-lo)||1)*(H-44);
@@ -192,13 +197,20 @@ function show(r,saved){
    <div class="mut">Gamma positiva: di solito i prezzi tendono a smorzarsi; negativa: i movimenti possono amplificarsi. Stima con ipotesi forti.</div></div>`;
   h+=`<div class="card"><b>Tendenza negli ultimi giorni</b>${histChart(history(r.symbol))}</div>`;
   h+=saved?"":oiCard(oiCompare(r));
+  const LV=levels((r.expiries||[]).find(e=>e.exp==sel));
   if(exps.length){
     h+=`<div class="card"><b>Strike per scadenza</b><select id="expsel" style="margin-top:6px">${exps.map(e=>`<option ${e==sel?"selected":""}>${e}</option>`).join("")}</select>
-    <label>Open interest (contratti aperti) <span class="ok">■ call</span> <span class="bad">■ put</span></label>${oiChart(r.by_exp[sel],r.spot,"oi")}
-    <label>Volume di oggi <span class="ok">■ call</span> <span class="bad">■ put</span></label>${oiChart(r.by_exp[sel],r.spot,"vol")}
-    <label>Volatilità implicita per strike (smile) <span class="ok">■ call</span> <span class="bad">■ put</span></label>${smileChart(r.by_exp[sel],r.spot)}
-    <div class="mut">La linea tratteggiata è il prezzo attuale. Più alte sono le barre, più contratti ci sono a quello strike.</div></div>`;
+    <label>Open interest (contratti aperti) <span class="ok">■ call</span> <span class="bad">■ put</span></label>${oiChart(r.by_exp[sel],r.spot,"oi",LV)}
+    <label>Volume di oggi <span class="ok">■ call</span> <span class="bad">■ put</span></label>${oiChart(r.by_exp[sel],r.spot,"vol",LV)}
+    <label>Volatilità implicita per strike (smile) <span class="ok">■ call</span> <span class="bad">■ put</span></label>${smileChart(r.by_exp[sel],r.spot,LV)}
+    <div class="mut">Linee: <span style="color:#ff5c5c">put wall</span>, <span style="color:#3ddc97">call wall</span>, <span style="color:#9b8cff">max pain</span>, <span style="color:#4ea8ff">zero gamma</span>, <span style="color:#c9a227">±1σ</span> e <span style="color:#b0b8c9">±2σ</span> (puntini); tratteggiata gialla = prezzo attuale. Più alte sono le barre, più contratti ci sono a quello strike.</div></div>`;
   }
+  {const L=(r.expiries||[]).map(e=>`<tr><td>${e.exp.slice(5)}<br><span class="mut">${e.dte} gg</span></td><td class="bad">${e.put_wall==null?"n/d":n2(e.put_wall)}</td><td class="ok">${e.call_wall==null?"n/d":n2(e.call_wall)}</td><td>${e.max_pain==null?"n/d":n2(e.max_pain)}</td><td>${e.zero_gamma==null?"n/d":n2(e.zero_gamma)}</td></tr>`).join(""),T=r.totals||{};
+  h+=`<div class="card"><b>Livelli per scadenza</b><table><tr><th>Scadenza</th><th>Put wall</th><th>Call wall</th><th>Max pain</th><th>Zero γ</th></tr>${L}<tr><td><b>Tutte</b><br><span class="mut">${(r.expiries||[]).length} scad.</span></td><td class="bad">${T.put_wall==null?"n/d":n2(T.put_wall)}</td><td class="ok">${T.call_wall==null?"n/d":n2(T.call_wall)}</td><td>${T.max_pain==null?"n/d":n2(T.max_pain)}</td><td>${T.zero_gamma==null?"n/d":n2(T.zero_gamma)}</td></tr></table>
+  <div class="mut"><b>Put wall</b>: strike sotto il prezzo con più put aperte. <b>Call wall</b>: strike sopra il prezzo con più call aperte. <b>Max pain</b>: strike in cui chi ha comprato opzioni perderebbe di più a scadenza. <b>Zero γ</b>: prezzo in cui la gamma netta stimata cambia segno; sopra, di solito i movimenti si smorzano, sotto possono amplificarsi. "n/d" = nessun passaggio per zero entro ±15% dal prezzo. Livelli calcolati sull'open interest di ieri e su una stima con ipotesi forti (clienti che comprano, chi fa mercato che vende): sono riferimenti, non previsioni.</div></div>`}
+  {const S=(r.expiries||[]).map(e=>`<tr><td>${e.exp.slice(5)}<br><span class="mut">${e.dte} gg</span></td><td>${e.sd2_dn==null?"n/d":n2(e.sd2_dn)}</td><td>${e.sd1_dn==null?"n/d":n2(e.sd1_dn)}</td><td>${e.sd1_up==null?"n/d":n2(e.sd1_up)}</td><td>${e.sd2_up==null?"n/d":n2(e.sd2_up)}</td></tr>`).join("");
+  h+=`<div class="card"><b>Prima e seconda deviazione standard</b><table><tr><th>Scadenza</th><th>-2σ</th><th>-1σ</th><th>+1σ</th><th>+2σ</th></tr>${S}</table>
+  <div class="mut">Fasce di prezzo che il mercato, tramite la volatilità implicita (IV al denaro), considera plausibili fino a quella scadenza: prezzo × IV × √(giorni/365). Entro ±1σ dovrebbe stare circa il 68% dei casi, entro ±2σ circa il 95%, <b>se</b> la volatilità implicita è giusta e i prezzi seguono una curva a campana, cosa che nei crolli e nei gap non succede. Sono riferimenti statistici, non previsioni.</div></div>`}
   h+=`<div class="card"><b>Scadenze</b><table><tr><th>Scadenza</th><th>IV ATM</th><th>Mov. atteso</th><th>Max pain</th><th>P/C vol</th></tr>`
    +r.expiries.map(e=>`<tr><td>${e.exp}<br><span class="mut">${e.dte} gg</span></td><td>${e.atm_iv==null?"n/d":n2(e.atm_iv)+"%"}</td><td>${e.move_pct==null?"n/d":"±"+n2(e.move_pct)+"%"}</td><td>${e.max_pain==null?"n/d":n2(e.max_pain)}</td><td>${e.cvol?n2(e.pvol/e.cvol):"n/d"}</td></tr>`).join("")
    +`</table><div class="mut">Movimento atteso = costo dello straddle sul prezzo: quanto il mercato "paga" per un movimento fino a quella scadenza.</div></div>`;

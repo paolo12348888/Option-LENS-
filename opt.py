@@ -1,5 +1,5 @@
 """Analisi di una catena di opzioni (dati CBOE ritardati). Solo libreria standard."""
-import re, datetime
+import re, datetime, math
 
 OCC = re.compile(r"^(.+?)(\d{6})([CP])(\d{8})$")
 
@@ -50,6 +50,52 @@ def max_pain(cs):
     return best
 
 
+def bs_gamma(S, K, iv, T):
+    """Gamma di Black-Scholes (tassi e dividendi a zero)."""
+    if S <= 0 or K <= 0 or iv <= 0 or T <= 0:
+        return 0.0
+    sd = iv * math.sqrt(T)
+    d1 = (math.log(S / K) + 0.5 * sd * sd) / sd
+    return math.exp(-0.5 * d1 * d1) / math.sqrt(2 * math.pi) / (S * sd)
+
+
+GRID = [0.85 + 0.005 * i for i in range(61)]          # da -15% a +15% rispetto al prezzo, passo 0,5%
+
+
+def gex_curve(cs, spot, asof):
+    """Gamma netta (milioni di $ per 1%) se il prezzo valesse spot*m, per ogni m della griglia.
+    Ipotesi classica: call +, put - (chi fa mercato è dall'altra parte dei clienti)."""
+    out = [0.0] * len(GRID)
+    for c in cs:
+        if c["oi"] <= 0 or c["iv"] <= 0 or abs(c["k"] / spot - 1) > 0.3:   # gli strike lontani pesano quasi zero
+            continue
+        T = max((c["exp"] - asof).days, 0.5) / 365.0
+        sign = 1 if c["type"] == "C" else -1
+        for i, m in enumerate(GRID):
+            S = spot * m
+            out[i] += sign * bs_gamma(S, c["k"], c["iv"], T) * c["oi"] * 100 * S * S * 0.01 / 1e6
+    return out
+
+
+def zero_gamma(curve, spot):
+    """Prezzo in cui la gamma netta cambia segno (il più vicino al prezzo attuale), oppure None."""
+    best = None
+    for i in range(len(curve) - 1):
+        a, b = curve[i], curve[i + 1]
+        if a == 0 or (a < 0) != (b < 0):
+            x = GRID[i] if a == 0 else GRID[i] + (GRID[i + 1] - GRID[i]) * (0 - a) / (b - a)
+            p = spot * x
+            if best is None or abs(p - spot) < abs(best - spot):
+                best = p
+    return None if best is None else round(best, 2)
+
+
+def walls(cs, spot):
+    cw = max((c for c in cs if c["type"] == "C" and c["k"] >= spot and c["oi"] > 0), key=lambda c: c["oi"], default=None)
+    pw = max((c for c in cs if c["type"] == "P" and c["k"] <= spot and c["oi"] > 0), key=lambda c: c["oi"], default=None)
+    return (cw["k"] if cw else None, pw["k"] if pw else None)
+
+
 def ratio(a, b):
     return None if b == 0 else round(a / b, 2)
 
@@ -65,6 +111,7 @@ def analyse(doc, symbol):
     pprem = sum(c["vol"] * c["mid"] * 100 for c in cs if c["type"] == "P")
     exps = sorted({c["exp"] for c in cs})
     per = []
+    curves = []
     for e in exps[:10]:
         ec = [c for c in cs if c["exp"] == e]
         calls = {c["k"]: c for c in ec if c["type"] == "C"}; puts = {c["k"]: c for c in ec if c["type"] == "P"}
@@ -76,10 +123,23 @@ def analyse(doc, symbol):
             atm_iv = round(100 * sum(ivs) / len(ivs), 1) if ivs else None
             st = calls[k]["mid"] + puts[k]["mid"]
             move = round(100 * st / spot, 2) if st > 0 else None
-        per.append({"exp": e.isoformat(), "dte": (e - asof).days,
+        cwall, pwall = walls(ec, spot)
+        curve = gex_curve(ec, spot, asof)
+        curves.append(curve)
+        sd = None
+        if atm_iv:
+            sd = spot * (atm_iv / 100.0) * math.sqrt(max((e - asof).days, 0.5) / 365.0)   # 1 deviazione standard in $
+        per.append({"exp": e.isoformat(), "dte": (e - asof).days, "call_wall": cwall, "put_wall": pwall,
+                    "sd1": None if sd is None else round(sd, 2),
+                    "sd1_up": None if sd is None else round(spot + sd, 2), "sd1_dn": None if sd is None else round(spot - sd, 2),
+                    "sd2_up": None if sd is None else round(spot + 2 * sd, 2), "sd2_dn": None if sd is None else round(spot - 2 * sd, 2),
+                    "zero_gamma": zero_gamma(curve, spot),
                     "cvol": sum(c["vol"] for c in ec if c["type"] == "C"), "pvol": sum(c["vol"] for c in ec if c["type"] == "P"),
                     "coi": sum(c["oi"] for c in ec if c["type"] == "C"), "poi": sum(c["oi"] for c in ec if c["type"] == "P"),
                     "atm_iv": atm_iv, "move_pct": move, "max_pain": max_pain(ec)})
+    tot = [c for c in cs if c["exp"] in set(exps[:10])]
+    tcw, tpw = walls(tot, spot)
+    totals = {"call_wall": tcw, "put_wall": tpw, "max_pain": max_pain(tot), "zero_gamma": zero_gamma([sum(v) for v in zip(*curves)], spot) if curves else None}
     # muri di open interest sulla prima scadenza con almeno 5 giorni (o la prima)
     near = next((e for e in exps if (e - asof).days >= 5), exps[0])
     nc = [c for c in cs if c["exp"] == near]
@@ -135,7 +195,7 @@ def analyse(doc, symbol):
     return {"symbol": symbol, "spot": round(spot, 2), "asof": asof.isoformat(), "ts": doc.get("timestamp"),
             "pc_vol": pcv, "pc_oi": ratio(po, co), "cvol": cv, "pvol": pv, "coi": co, "poi": po,
             "call_premium": round(cprem), "put_premium": round(pprem),
-            "expiries": per, "near_exp": near.isoformat(),
+            "expiries": per, "totals": totals, "near_exp": near.isoformat(),
             "wall_calls": [{"k": c["k"], "oi": c["oi"]} for c in wall_c], "wall_puts": [{"k": c["k"], "oi": c["oi"]} for c in wall_p],
             "unusual": unusual, "unusual_count": len(un), "by_exp": by_exp, "skew": skew, "gex": round(gex / 1e6, 1), "score": score, "label": label, "why": why,
             "contracts": len(cs)}
