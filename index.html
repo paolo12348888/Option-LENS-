@@ -135,12 +135,20 @@ function smileChart(rows,spot,lv){
   const path=k=>{let d="",on=false;for(const r of rows){const v=r[k];if(v){d+=(on?"L":"M")+sc.x(r.k).toFixed(1)+" "+y(v).toFixed(1);on=true}}return d};
   return `<svg viewBox="0 0 ${W} ${H}"><text x="2" y="14" fill="${css('--mut')}" font-size="11">${n0(hi)}%</text><text x="2" y="${H-24}" fill="${css('--mut')}" font-size="11">${n0(lo)}%</text><path d="${path('civ')}" fill="none" stroke="${css('--ok')}" stroke-width="2"/><path d="${path('piv')}" fill="none" stroke="${css('--bad')}" stroke-width="2"/>${xlabels(sc,rows,H,spot,lv)}</svg>`}
 function histChart(h){
-  if(h.length<2)return '<div class="mut">Serve almeno un secondo giorno di dati: rifai l\'analisi o lo scanner nei prossimi giorni e la linea compare qui.</div>';
-  const W=640,H=200,P=34,v=h.map(x=>x.pc).filter(x=>x!=null),hi=Math.max(...v,1.2),lo=Math.min(...v,0.6),x=i=>P+i/(h.length-1)*(W-P-10),y=a=>H-24-(a-lo)/((hi-lo)||1)*(H-44);
-  const d=h.map((p,i)=>p.pc==null?"":(i?"L":"M")+x(i).toFixed(1)+" "+y(p.pc).toFixed(1)).join("");
-  return `<svg viewBox="0 0 ${W} ${H}"><line x1="${P}" x2="${W-10}" y1="${y(1)}" y2="${y(1)}" stroke="${css('--line')}" stroke-dasharray="4 3"/><text x="2" y="${y(1)+4}" fill="${css('--mut')}" font-size="11">1,0</text><path d="${d}" fill="none" stroke="${css('--warn')}" stroke-width="2.2"/>`
-   +h.map((p,i)=>p.pc==null?"":`<circle cx="${x(i)}" cy="${y(p.pc)}" r="3" fill="${css('--warn')}"/>`).join("")
-   +`<text x="${P}" y="${H-6}" fill="${css('--mut')}" font-size="11">${h[0].d.slice(5)}</text><text x="${W-10}" y="${H-6}" fill="${css('--mut')}" font-size="11" text-anchor="end">${h[h.length-1].d.slice(5)}</text></svg><div class="mut">Put/call sui volumi: sopra 1 prevalgono le put, sotto 1 le call.</div>`}
+  if(h.length<2)return '<div class="mut">Serve almeno un secondo giorno di dati: rifai l\'analisi o lo scanner nei prossimi giorni e il grafico compare qui.</div>';
+  h=h.filter(x=>x.pc!=null).slice(-12);
+  const W=640,H=230,P=40,T=22,B=34,n=h.length,bw=Math.min(40,(W-P-10)/n*0.62);
+  const dev=Math.max(0.25,...h.map(x=>Math.abs(x.pc-1))),hi=1+dev*1.15,lo=1-dev*1.15;
+  const x=i=>P+(i+0.5)*(W-P-10)/n,y=a=>T+(hi-a)/(hi-lo)*(H-T-B);
+  let g=`<rect x="${P}" y="${T}" width="${W-P-10}" height="${y(1)-T}" fill="${css('--bad')}" opacity=".07"/><rect x="${P}" y="${y(1)}" width="${W-P-10}" height="${H-B-y(1)}" fill="${css('--ok')}" opacity=".07"/>`;
+  g+=`<text x="${P+4}" y="${T+12}" fill="${css('--bad')}" font-size="11">più put (ribassista)</text><text x="${P+4}" y="${H-B-5}" fill="${css('--ok')}" font-size="11">più call (rialzista)</text>`;
+  g+=`<line x1="${P}" x2="${W-10}" y1="${y(1)}" y2="${y(1)}" stroke="${css('--ink')}" stroke-width="1.2"/><text x="2" y="${y(1)+4}" fill="${css('--mut')}" font-size="11">1,0</text>`;
+  h.forEach((p,i)=>{const up=p.pc>=1,c=css(up?'--bad':'--ok'),y0=y(1),y1=y(p.pc),top=Math.min(y0,y1),ht=Math.max(2,Math.abs(y1-y0));
+    g+=`<rect x="${x(i)-bw/2}" y="${top}" width="${bw}" height="${ht}" rx="3" fill="${c}"/>`;
+    g+=`<text x="${x(i)}" y="${up?top-4:top+ht+12}" fill="${c}" font-size="11" font-weight="700" text-anchor="middle">${n2(p.pc)}</text>`;
+    g+=`<text x="${x(i)}" y="${H-12}" fill="${css('--mut')}" font-size="10.5" text-anchor="middle">${p.d.slice(8)}/${p.d.slice(5,7)}</text>`});
+  const a=h[h.length-1].pc,b=h[0].pc,dir=a>b+0.03?"in salita: più put rispetto a prima":a<b-0.03?"in discesa: più call rispetto a prima":"stabile";
+  return `<svg viewBox="0 0 ${W} ${H}">${g}</svg><div class="mut">Ogni barra è un giorno: put/call sui volumi. <span class="bad">Rosso sopra 1</span> = prevalgono le put, <span class="ok">verde sotto 1</span> = prevalgono le call. Tendenza: <b>${dir}</b>.</div>`}
 
 
 /* variazione di open interest tra un giorno e l'altro (dati salvati in questo browser, solo dall'Analisi) */
@@ -170,10 +178,13 @@ function oiCard(c){
   if(c.stale)return `<div class="card"><b>Variazione open interest</b><div class="mut">Rispetto all'analisi del ${c.prev} l'open interest risulta identico. Nel fine settimana e nei festivi non cambia; in un giorno di borsa si aggiorna una volta, di notte, quindi riprova più tardi o domani.</div></div>`;
   const rd=x=>{const v=Math.max(100,0.5*x.vol);return x.d>=v?["aperture nette","ok"]:x.d<=-v?["chiusure nette","bad"]:["misto","warn"]};
   let h=`<div class="card"><b>Variazione open interest</b> <span class="mut">(confronto con l'analisi del ${c.prev}: contratti aperti in più o in meno da allora)</span>
-   <div class="row"><span>Contratti call aperti</span><b class="${c.dc>=0?"ok":"bad"}">${c.dc>0?"+":""}${n0(c.dc)}</b></div>
-   <div class="row"><span>Contratti put aperti</span><b class="${c.dp>=0?"ok":"bad"}">${c.dp>0?"+":""}${n0(c.dp)}</b></div>`;
-  h+=c.rows.length?`<table><tr><th>Contratto</th><th>OI prima → ora</th><th>Var.</th><th>Lettura</th></tr>`+c.rows.map(x=>{const [t,cl]=rd(x);return `<tr><td>${x.t=="C"?"CALL":"PUT"} ${n2(x.k)}<br><span class="mut">${x.e}</span></td><td>${n0(x.oi0)} → ${n0(x.oi1)}<br><span class="mut">vol ${n0(x.vol)}</span></td><td class="${x.d>=0?"ok":"bad"}">${x.d>0?"+":""}${n0(x.d)}</td><td class="${cl}">${t}</td></tr>`}).join("")+`</table>`:`<div class="mut">Nessun contratto con variazione di almeno 100.</div>`;
-  return h+`<div class="mut">"Aperture nette": l'open interest è salito almeno di metà del volume di quel giorno, quindi molti contratti sembrano nuovi. "Chiusure nette": è sceso di altrettanto. Resta un'inferenza: non si sa chi ha comprato o venduto, e una scadenza passata fa sparire contratti senza che siano stati "chiusi".</div></div>`}
+   <div class="row"><span><b class="ok">■ CALL</b> aperte</span><b class="ok">${c.dc>=0?"▲ +":"▼ "}${n0(c.dc)}</b></div>
+   <div class="row"><span><b class="bad">■ PUT</b> aperte</span><b class="bad">${c.dp>=0?"▲ +":"▼ "}${n0(c.dp)}</b></div>`;
+  const mx=Math.max(1,...c.rows.map(x=>Math.abs(x.d)));
+  const pill=(t,cl)=>`<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700;color:${cl=="ok"?"#2f8de0":cl=="bad"?"#e69500":"var(--mut)"};border:1px solid ${cl=="ok"?"#4ea8ff":cl=="bad"?"#e69500":"var(--line)"}">${t}</span>`;
+  h+=c.rows.length?`<table><tr><th>Contratto</th><th>OI prima → ora</th><th>Variazione</th></tr>`+c.rows.map(x=>{const [t,cl]=rd(x),isC=x.t=="C",col=isC?"ok":"bad",w=Math.max(6,Math.round(Math.abs(x.d)/mx*100));
+    return `<tr style="background:${cl=="ok"?"color-mix(in srgb,#4ea8ff 14%,transparent)":cl=="bad"?"color-mix(in srgb,#ffb020 14%,transparent)":"transparent"}"><td style="border-left:4px solid var(--${col})"><b class="${col}">${isC?"CALL":"PUT"} ${n2(x.k)}</b><br><span class="mut">${x.e}</span></td><td>${n0(x.oi0)} → ${n0(x.oi1)}<br><span class="mut">vol ${n0(x.vol)}</span></td><td><b>${x.d>=0?"▲ +":"▼ "}${n0(x.d)}</b><div style="height:6px;border-radius:3px;background:var(--field);margin:4px 0"><i style="display:block;height:100%;width:${w}%;border-radius:3px;background:${x.d>=0?"#4ea8ff":"#e69500"}"></i></div>${pill(t,cl)}</td></tr>`}).join("")+`</table>`:`<div class="mut">Nessun contratto con variazione di almeno 100.</div>`;
+  return h+`<div class="mut">Colore del contratto: <b class="ok">call</b> verde, <b class="bad">put</b> rossa. La freccia ▲▼ dice se i contratti aperti sono aumentati o diminuiti; la barra mostra quanto pesa rispetto agli altri. Sfondo blu = "aperture nette" (contratti nuovi), arancio = "chiusure nette", neutro = "misto". "Aperture nette": l'open interest è salito almeno di metà del volume di quel giorno, quindi molti contratti sembrano nuovi. "Chiusure nette": è sceso di altrettanto. Resta un'inferenza: non si sa chi ha comprato o venduto, e una scadenza passata fa sparire contratti senza che siano stati "chiusi".</div></div>`}
 
 function strikeTable(rows,spot,lv){
   if(!rows||!rows.length)return "";
