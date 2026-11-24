@@ -213,6 +213,51 @@ function intraCards(r){
 
 /* analisi */
 function ageText(r){if(!r.fetched)return "";const m=Math.round((Date.now()/1000-r.fetched)/60);return m<=0?"scaricati ora":m<60?`scaricati ${m} min fa`:`scaricati ${Math.round(m/60)} ore fa`}
+
+/* fuori orario: prezzo pre/after-market letto dal telefono */
+window.__ext=window.__ext||{};
+async function extFetch(sym){
+  const y=sym.replace(/^_/,"^");
+  const u="https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(y)+"?interval=5m&range=1d&includePrePost=true";
+  const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),12000);
+  try{
+    const res=await fetch(u,{signal:ctl.signal});
+    if(!res.ok)throw new Error("risposta "+res.status);
+    const j=await res.json(),R=j&&j.chart&&j.chart.result&&j.chart.result[0];
+    if(!R)throw new Error("nessun dato");
+    const m=R.meta||{},tp=m.currentTradingPeriod||{},ts=R.timestamp||[],cl=(R.indicators&&R.indicators.quote&&R.indicators.quote[0]&&R.indicators.quote[0].close)||[];
+    const rs=tp.regular&&tp.regular.start,re=tp.regular&&tp.regular.end;
+    if(!rs||!re)throw new Error("orari di sessione non disponibili");
+    let last=null;
+    for(let i=0;i<ts.length;i++){if(cl[i]!=null&&(ts[i]<rs||ts[i]>=re))last={p:cl[i],t:ts[i],ph:ts[i]<rs?"pre-market":"after-hours"}}
+    return {ok:true,last,reg:m.regularMarketPrice,at:Date.now()};
+  }catch(e){return {ok:false,err:e.name=="AbortError"?"timeout":(e.message||"errore")}}
+  finally{clearTimeout(tm)}
+}
+function extCard(r){
+  const x=window.__ext[r.symbol];
+  let b=`<div class="card"><b>Fuori orario (pre-market / after-hours)</b>`;
+  if(r.symbol.startsWith("_")){return b+`<div class="mut">Per gli indici il prezzo fuori orario non è disponibile qui.</div></div>`}
+  b+=` <button id="extgo" style="margin-left:8px">Controlla ora</button>`;
+  if(x&&!x.ok)b+=`<div class="bad" style="margin-top:6px">Prezzo non disponibile (${x.err}). Nessun dato inventato: la fonte gratuita non ha risposto.</div>`;
+  else if(x&&x.ok&&!x.last)b+=`<div class="mut" style="margin-top:6px">Nessuno scambio fuori orario trovato in questo momento.</div>`;
+  else if(x&&x.ok){
+    const p=x.last.p,sp=r.spot,gap=p-sp,gp=gap/sp*100,I=r.intraday,e0=(r.expiries||[])[0]||{};
+    const sd=I?I.daily_sd:(e0.sd1||null);
+    const t=new Date(x.last.t*1000).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
+    const k=sd?Math.abs(gap)/sd:null;
+    let msg="";
+    if(k!=null){msg=k>=2?"oltre ±2σ di una giornata: i livelli calcolati sulla chiusura sono probabilmente superati":k>=1?"oltre ±1σ di una giornata: leggere i livelli con cautela":"dentro ±1σ di una giornata: i livelli restano utilizzabili"}
+    const lv=[];
+    for(const [nm,v] of [["put wall",e0.put_wall],["call wall",e0.call_wall],["max pain",e0.max_pain],["zero γ",e0.zero_gamma]]){if(v!=null)lv.push(`${nm} ${n2(v)} (${p>v?"sopra":"sotto"})`)}
+    b+=`<div style="margin-top:6px"><span class="big ${gap>=0?"ok":"bad"}">${n2(p)} $</span> <span class="mut">${x.last.ph} alle ${t} · chiusura ${n2(sp)} $</span></div>
+    <div class="${gap>=0?"ok":"bad"}">${gap>=0?"+":""}${n2(gap)} $ (${gap>=0?"+":""}${n2(gp)}%)${k!=null?` · ${n2(k)}σ`:""}</div>
+    ${msg?`<div class="warn">${msg}</div>`:""}
+    ${lv.length?`<div class="mut">Rispetto ai livelli della scadenza più vicina: ${lv.join(", ")}.</div>`:""}`;
+  }
+  b+=`<div class="mut" style="margin-top:6px">Le opzioni non si scambiano fuori orario: i livelli restano quelli dell'ultima seduta, qui vedi solo dove si trova il titolo rispetto a essi. Il prezzo fuori orario è poco liquido e può muoversi molto. Non è una previsione dell'apertura.</div></div>`;
+  return b;
+}
 function show(r,saved){
   LAST=r;
   const c=r.label=="rialzista"?"ok":r.label=="ribassista"?"bad":"warn";
@@ -221,6 +266,7 @@ function show(r,saved){
   let h=`<div class="card"><div class="mut">${r.symbol} · ${n2(r.spot)} $ · seduta del ${r.trade_date||r.asof} · ${n0(r.contracts)} contratti · <span class="age">${saved?"ultima analisi salvata (offline)":ageText(r)}</span></div>
    <div class="big ${c}">Lettura: ${r.label}</div>
    ${r.why.map(w=>`<div class="mut">• ${w}</div>`).join("")||'<div class="mut">Pochi scambi per trarre una lettura.</div>'}</div>`;
+  h+=extCard(r);
   h+=`<div class="card"><b>Chi sta scambiando cosa</b>
    <div class="row"><span>Volume call / put</span><b>${n0(r.cvol)} / ${n0(r.pvol)}</b></div>
    <div class="row"><span>Rapporto put/call sui volumi</span><b>${n2(r.pc_vol)}</b></div>
@@ -273,6 +319,7 @@ function show(r,saved){
   <p><b>Modalità intraday</b>: considera solo le scadenze entro 7 giorni (al massimo 5) e gli strike entro ±2σ di una giornata di borsa dal prezzo (tra 2% e 10%). Serve a vedere i livelli che contano nella giornata, ma i risultati valgono solo dentro quella finestra; il max pain resta sulla catena intera.</p>
   <p>Tutti questi livelli sono riferimenti basati su dati ritardati e su ipotesi: non sono previsioni né consulenza finanziaria.</p></div></details></div>`;
   $("out").innerHTML=h+`</div>`+DEF;
+  const eb=$("extgo");if(eb)eb.onclick=async()=>{eb.disabled=true;eb.textContent="Controllo…";window.__ext[r.symbol]=await extFetch(r.symbol);show(LAST,saved)};
   const es=$("expsel");if(es)es.onchange=()=>{window.__exp=es.value;show(LAST,saved)};
 }
 async function go(sym){
