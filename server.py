@@ -88,7 +88,7 @@ def analyse_doc(sym, doc):
 # ---------- Alpaca: prezzo pre-market / after-hours (chiavi nelle variabili d'ambiente di Render) ----------
 ALPACA_ID = os.environ.get("ALPACA_KEY_ID", "")
 ALPACA_SECRET = os.environ.get("ALPACA_SECRET_KEY", "")
-ALPACA_FEED = os.environ.get("ALPACA_FEED", "iex")          # "iex" = gratuito; "sip" solo con abbonamento
+ALPACA_FEED = os.environ.get("ALPACA_FEED", "sip")          # "sip" = dati consolidati ritardati di 15 min (gratuiti); "iex" = solo borsa IEX
 EXT_CACHE = {}
 
 
@@ -127,7 +127,38 @@ def parse_alpaca(snap):
     if ref is None and db.get("c"):
         ref, ref_day = db["c"], et.date().isoformat()
     return {"ok": True, "price": float(lt["p"]), "t": int(t.timestamp()), "et": et.strftime("%H:%M"), "phase": phase,
+            "age_min": int(max(0, time.time() - t.timestamp()) // 60),
             "ref": float(ref) if ref else None, "ref_day": ref_day, "feed": ALPACA_FEED}
+
+
+def _iso(s):
+    return datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(datetime.timezone.utc)
+
+
+def parse_alpaca_sip(minute, daily, now):
+    """Barre da 1 minuto e giornaliere SIP (ritardate di 15 minuti): ultimo prezzo, anche pre-market e after-hours."""
+    mb = ((minute or {}).get("bars") or [])
+    if not mb:
+        raise ValueError("Alpaca non ha trovato scambi recenti per questo titolo.")
+    b = mb[0]
+    t = _iso(b["t"]) + datetime.timedelta(minutes=1)          # la barra è etichettata all'inizio del minuto
+    et = t + datetime.timedelta(hours=et_offset_hours(t))
+    mins = et.hour * 60 + et.minute
+    phase = "pre-market" if mins < 570 else ("sessione regolare" if mins < 960 else "after-hours")
+    ref, ref_day = None, None
+    for d in ((daily or {}).get("bars") or []):                  # ordinate dalla più recente
+        dt = _iso(d["t"]); dd = (dt + datetime.timedelta(hours=et_offset_hours(dt))).date()
+        if dd < et.date() or (dd == et.date() and phase == "after-hours"):
+            ref, ref_day = d["c"], dd.isoformat(); break
+    return {"ok": True, "price": float(b["c"]), "t": int(t.timestamp()), "et": et.strftime("%H:%M"), "phase": phase,
+            "age_min": int(max(0, now - t.timestamp()) // 60), "ref": float(ref) if ref else None, "ref_day": ref_day, "feed": "sip ritardato 15 min"}
+
+
+def _alp_get(path, params):
+    url = "https://data.alpaca.markets" + path + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"APCA-API-KEY-ID": ALPACA_ID, "APCA-API-SECRET-KEY": ALPACA_SECRET, "accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=12) as r:
+        return json.loads(r.read().decode("utf-8"))
 
 
 def ext_quote(sym):
@@ -135,23 +166,34 @@ def ext_quote(sym):
     if not re.match(r"^[A-Z.\-]{1,10}$", sym):
         raise ValueError("Simbolo non valido.")
     if DEMO:
-        return {"ok": True, "price": 148.67, "t": int(time.time()), "et": "06:09", "phase": "pre-market", "ref": 155.38, "ref_day": "demo", "feed": "demo"}
+        return {"ok": True, "price": 148.67, "t": int(time.time()), "et": "06:09", "phase": "pre-market", "ref": 155.38, "ref_day": "demo", "age_min": 16, "feed": "demo"}
     if not (ALPACA_ID and ALPACA_SECRET):
         raise ValueError("Alpaca non è configurato sul server.")
     now = time.time(); c = EXT_CACHE.get(sym)
     if c and now - c[0] < 20: return c[1]
-    url = "https://data.alpaca.markets/v2/stocks/%s/snapshot?feed=%s" % (urllib.parse.quote(sym), urllib.parse.quote(ALPACA_FEED))
-    req = urllib.request.Request(url, headers={"APCA-API-KEY-ID": ALPACA_ID, "APCA-API-SECRET-KEY": ALPACA_SECRET, "accept": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=12) as r:
-            snap = json.loads(r.read().decode("utf-8"))
+        res = None
+        if ALPACA_FEED != "iex":                                  # prima scelta: dati SIP ritardati di 15 minuti (coprono pre-market e after-hours)
+            now_ts = time.time()
+            end = datetime.datetime.fromtimestamp(now_ts - 16 * 60, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            st = datetime.datetime.fromtimestamp(now_ts - 5 * 86400, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            try:
+                mn = _alp_get("/v2/stocks/%s/bars" % urllib.parse.quote(sym), {"timeframe": "1Min", "start": st, "end": end, "limit": 1, "sort": "desc", "feed": "sip", "adjustment": "raw"})
+                dy = _alp_get("/v2/stocks/%s/bars" % urllib.parse.quote(sym), {"timeframe": "1Day", "start": st, "end": end, "limit": 5, "sort": "desc", "feed": "sip", "adjustment": "raw"})
+                res = parse_alpaca_sip(mn, dy, now_ts)
+            except urllib.error.HTTPError as e:
+                if e.code not in (401, 403, 422): raise
+        if res is None:                                           # ripiego: solo borsa IEX (gratuito, niente scambi prima delle 8:00 ET)
+            snap = _alp_get("/v2/stocks/%s/snapshot" % urllib.parse.quote(sym), {"feed": "iex"})
+            res = parse_alpaca(snap)
     except urllib.error.HTTPError as e:
         if e.code in (401, 403): raise ValueError("Alpaca ha rifiutato le chiavi (controlla ID e secret su Render).")
         if e.code == 429: raise ValueError("Alpaca: troppe richieste, riprova tra poco.")
         raise ValueError("Alpaca ha risposto %s." % e.code)
+    except ValueError:
+        raise
     except Exception:
         raise ValueError("Alpaca non raggiungibile.")
-    res = parse_alpaca(snap)
     EXT_CACHE[sym] = (now, res)
     if len(EXT_CACHE) > 500: EXT_CACHE.clear()
     return res
