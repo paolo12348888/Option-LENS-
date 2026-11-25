@@ -230,15 +230,16 @@ def rotation_from_bars(bars):
             v = [by[k][f] for k in keys if k in by and by[k][f] is not None]
             return sum(v) / len(v) if v else None
         notes = []
-        for f, lab in (("r1", "oggi/ultima seduta"), ("r5", "ultime 5 sedute")):
+        for f, lab in (("r1", "ultima seduta"), ("r5", "ultime 5 sedute"), ("r20", "ultime 20 sedute")):
+            th = 2.0 if f == "r20" else 0.8
             down = sum(1 for x in sectors if x[f] is not None and x[f] < 0)
             dfn = avg(("XLV", "XLP", "XLU"), f); tech = by["XLK"][f]; sp = spy[f]
             if tech is None or sp is None or dfn is None: continue
             if down >= len(sectors) - 1 and sp < -0.5:
                 t = "calo generalizzato (%d settori su %d in negativo): più simile a una fuga dal rischio che a una rotazione" % (down, len(sectors))
-            elif tech < sp - 0.8 and dfn > 0 and down <= len(sectors) // 2 + 1:
+            elif tech < sp - th and dfn > 0 and down <= len(sectors) // 2 + 1:
                 t = "la tecnologia perde terreno e i difensivi salgono: indizio di rotazione fuori dalla tecnologia"
-            elif tech > sp + 0.8 and dfn < 0:
+            elif tech > sp + th and dfn < 0:
                 t = "la tecnologia guida e i difensivi cedono: indizio di rotazione verso la tecnologia"
             else:
                 t = "nessuno schema netto di rotazione"
