@@ -39,8 +39,8 @@ svg{width:100%;height:auto;display:block} .age{font-size:12px}
 
 <div id="p1">
   <div class="card">
-    <label>Titolo (es. AAPL, TSLA, SPY, SPX)</label>
-    <div class="inl"><input id="sym" value="SPY" autocapitalize="characters"><button class="sec" id="fav" title="Preferito">☆</button></div>
+    <label>Titolo (es. NVDA, AAPL, TSLA, SPX)</label>
+    <div class="inl"><input id="sym" value="NVDA" autocapitalize="characters"><button class="sec" id="fav" title="Preferito">☆</button></div>
     <div class="chips" id="favchips"></div>
     <button id="go">Analizza</button><div id="err"></div>
   </div>
@@ -224,6 +224,27 @@ function intraCards(r){
 
 /* analisi */
 function ageText(r){if(!r.fetched)return "";const m=Math.round((Date.now()/1000-r.fetched)/60);return m<=0?"scaricati ora":m<60?`scaricati ${m} min fa`:`scaricati ${Math.round(m/60)} ore fa`}
+
+/* pre-apertura: prezzo del broker inserito a mano */
+function pmCard(r){
+  const sv=ls("ol_pm_"+r.symbol,{}),I=r.intraday,e0=(r.expiries||[])[0]||{};
+  const num=v=>{const x=parseFloat(String(v).replace(",","."));return isFinite(x)&&x>0?x:null};
+  const ref=num(sv.ref),pm=num(sv.pm);
+  let b=`<div class="card"><b>Pre-apertura: inserisci i prezzi del tuo broker</b>
+  <div class="mut">Il feed gratuito non ha il mercato notturno. Scrivi qui la chiusura e il prezzo pre-market che vedi sul broker: l'app calcola il gap e lo confronta con i livelli.</div>
+  <div class="inl" style="margin-top:8px"><div style="flex:1"><label>Chiusura ufficiale</label><input id="pmref" inputmode="decimal" placeholder="${n2(r.spot)}" value="${sv.ref||""}"></div><div style="flex:1"><label>Prezzo pre-market</label><input id="pmpx" inputmode="decimal" placeholder="es. 148,51" value="${sv.pm||""}"></div></div>
+  <button id="pmgo">Calcola il gap</button>`;
+  if(pm){
+    const base=ref||r.spot,gap=pm-base,gp=gap/base*100,dd=I?I.daily_sd/r.spot*base:null,k=dd?Math.abs(gap)/dd:null;
+    const off=ref&&Math.abs(ref/r.spot-1)>0.03;
+    b+=`<div style="margin-top:10px"><span class="big ${gap>=0?"ok":"bad"}">${gap>=0?"+":""}${n2(gp)}%</span> <span class="mut">${gap>=0?"+":""}${n2(gap)} $ rispetto a ${n2(base)} $</span></div>`;
+    if(k!=null)b+=`<div>Gap = <b>${n2(k)}σ</b> di una giornata (±1σ = ±${n2(dd)} $). <span class="${k>=2?"bad":k>=1?"warn":"ok"}">${k>=2?"Evento forte: i livelli di ieri sono probabilmente superati.":k>=1?"Gap rilevante: leggere i livelli con cautela.":"Gap normale: i livelli restano utilizzabili."}</span></div>`;
+    if(off)b+=`<div class="bad" style="margin-top:6px">Attenzione: il prezzo dell'analisi (${n2(r.spot)} $) è molto diverso dalla tua chiusura (${n2(ref)} $). I dati dell'app non sono allineati al mercato, quindi i livelli non sono confrontabili: rifai l'analisi e controlla la data della seduta.</div>`;
+    else{const lv=[];for(const [nm,v] of [["put wall",e0.put_wall],["call wall",e0.call_wall],["zero γ",e0.zero_gamma],["−1σ giorno",I&&I.sd1_dn],["+1σ giorno",I&&I.sd1_up]]){if(v!=null)lv.push(`${nm} ${n2(v)} (${pm>v?"sopra":"sotto"}, ${n2(Math.abs(pm/v-1)*100)}%)`)}
+      if(lv.length)b+=`<div class="mut" style="margin-top:6px">Il pre-market rispetto ai livelli della scadenza più vicina: ${lv.join(", ")}.</div>`}
+  }
+  return b+`<div class="mut" style="margin-top:6px">Non è una previsione dell'apertura: il prezzo pre-market è poco liquido. Controlla anche volume pre-market e notizie sul titolo.</div></div>`;
+}
 function show(r,saved){
   LAST=r;
   const c=r.label=="rialzista"?"ok":r.label=="ribassista"?"bad":"warn";
@@ -232,6 +253,7 @@ function show(r,saved){
   let h=`<div class="card"><div class="mut">${r.symbol} · ${n2(r.spot)} $ · seduta del ${r.trade_date||r.asof} · ${n0(r.contracts)} contratti · <span class="age">${saved?"ultima analisi salvata (offline)":ageText(r)}</span></div>
    <div class="big ${c}">Lettura: ${r.label}</div>
    ${r.why.map(w=>`<div class="mut">• ${w}</div>`).join("")||'<div class="mut">Pochi scambi per trarre una lettura.</div>'}</div>`;
+  h+=pmCard(r);
   h+=`<div class="card"><b>Chi sta scambiando cosa</b>
    <div class="row"><span>Volume call / put</span><b>${n0(r.cvol)} / ${n0(r.pvol)}</b></div>
    <div class="row"><span>Rapporto put/call sui volumi</span><b>${n2(r.pc_vol)}</b></div>
@@ -284,6 +306,7 @@ function show(r,saved){
   <p><b>Modalità intraday</b>: considera solo le scadenze entro 7 giorni (al massimo 5) e gli strike entro ±2σ di una giornata di borsa dal prezzo (tra 2% e 10%). Serve a vedere i livelli che contano nella giornata, ma i risultati valgono solo dentro quella finestra; il max pain resta sulla catena intera.</p>
   <p>Tutti questi livelli sono riferimenti basati su dati ritardati e su ipotesi: non sono previsioni né consulenza finanziaria.</p></div></details></div>`;
   $("out").innerHTML=h+`</div>`+DEF;
+  const pg=$("pmgo");if(pg)pg.onclick=()=>{lsset("ol_pm_"+r.symbol,{ref:$("pmref").value.trim(),pm:$("pmpx").value.trim()});show(LAST,saved)};
   const es=$("expsel");if(es)es.onchange=()=>{window.__exp=es.value;show(LAST,saved)};
 }
 async function go(sym){

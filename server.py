@@ -9,7 +9,7 @@ DEMO = os.environ.get("DEMO_DATA") == "1"
 UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
 SYMBOL = re.compile(r"^[A-Za-z0-9.\-^]{1,10}$")
 INDEXES = {"SPX", "NDX", "VIX", "RUT", "DJX", "XSP"}
-DEFAULT_LIST = ["SPY", "QQQ", "IWM", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD", "NFLX", "AVGO", "JPM",
+DEFAULT_LIST = ["QQQ", "IWM", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD", "NFLX", "AVGO", "JPM",
                 "BAC", "XOM", "PLTR", "COIN", "SMCI", "MU"]
 CACHE, CLOCK = {}, threading.Lock()
 HITS, HLOCK = {}, threading.Lock()
