@@ -251,7 +251,8 @@ def analyse(doc, symbol, today=None):
     label = "rialzista" if score >= 2 else "ribassista" if score <= -2 else "neutro / misto"
     # --- Modalità intraday: solo gli strike vicini al prezzo, scadenze entro 7 giorni (max 5) ---
     intraday = None
-    iv_front = next((p["atm_iv"] for p in per if p["atm_iv"]), None)
+    # IV per la deviazione di un giorno: prima scadenza con almeno 3 giorni, perché la IV delle scadenze di oggi/domani è gonfiata
+    iv_front = next((p["atm_iv"] for p in per if p["atm_iv"] and p["dte"] >= 3), None) or next((p["atm_iv"] for p in per if p["atm_iv"]), None)
     daily = spot * (iv_front / 100.0) * math.sqrt(1 / 252.0) if iv_front else spot * 0.01     # 1 deviazione standard di un giorno di borsa
     wpct = min(max(2 * daily / spot, 0.02), 0.10)                                               # finestra: ±2σ giornaliere, tra 2% e 10%
     lo_k, hi_k = spot * (1 - wpct), spot * (1 + wpct)
