@@ -229,11 +229,14 @@ function ageText(r){if(!r.fetched)return "";const m=Math.round((Date.now()/1000-
 function pmCard(r){
   const sv=ls("ol_pm_"+r.symbol,{}),I=r.intraday,e0=(r.expiries||[])[0]||{};
   const num=v=>{const x=parseFloat(String(v).replace(",","."));return isFinite(x)&&x>0?x:null};
-  const ref=num(sv.ref),pm=num(sv.pm);
+  const X=(window.__alp||{})[r.symbol],xo=X&&X.ok?X:null,ref=num(sv.ref)||(xo&&xo.ref)||null,pm=num(sv.pm)||(xo&&xo.price)||null;
+  const xt=xo?new Date(xo.t*1000).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"}):"";
+  let src="";
+  if(META.ext){src=xo?`<div class="mut" style="margin-top:6px">Dati automatici da Alpaca (${xo.feed==="iex"?"solo borsa IEX, gratuito":xo.feed}): ultimo scambio <b>${n2(xo.price)} $</b> in ${xo.phase}, alle ${xt} (ora italiana)${xo.ref?`; chiusura di riferimento ${n2(xo.ref)} $`:""}. Se scrivi dei numeri nei campi, usa quelli.</div>`:X&&!X.ok?`<div class="warn" style="margin-top:6px">Alpaca: ${X.error||"non disponibile"}. Puoi inserire i prezzi a mano.</div>`:`<div class="mut" style="margin-top:6px">Sto chiedendo il prezzo ad Alpaca…</div>`}
   let b=`<div class="card"><b>Pre-apertura: inserisci i prezzi del tuo broker</b>
-  <div class="mut">Il feed gratuito non ha il mercato notturno. Scrivi qui la chiusura e il prezzo pre-market che vedi sul broker: l'app calcola il gap e lo confronta con i livelli.</div>
-  <div class="inl" style="margin-top:8px"><div style="flex:1"><label>Chiusura ufficiale</label><input id="pmref" inputmode="decimal" placeholder="${n2(r.spot)}" value="${sv.ref||""}"></div><div style="flex:1"><label>Prezzo pre-market</label><input id="pmpx" inputmode="decimal" placeholder="es. 148,51" value="${sv.pm||""}"></div></div>
-  <button id="pmgo">Calcola il gap</button>`;
+  <div class="mut">${META.ext?"Il prezzo fuori orario arriva da Alpaca. Se i numeri del tuo broker sono diversi, scrivili qui sotto: hanno la precedenza.":"Il feed gratuito non ha il mercato notturno. Scrivi qui la chiusura e il prezzo pre-market che vedi sul broker: l'app calcola il gap e lo confronta con i livelli."}</div>
+  <div class="inl" style="margin-top:8px"><div style="flex:1"><label>Chiusura ufficiale</label><input id="pmref" inputmode="decimal" placeholder="${xo&&xo.ref?n2(xo.ref):n2(r.spot)}" value="${sv.ref||""}"></div><div style="flex:1"><label>Prezzo pre-market</label><input id="pmpx" inputmode="decimal" placeholder="${xo?n2(xo.price):"es. 148,51"}" value="${sv.pm||""}"></div></div>
+  <button id="pmgo">Calcola il gap</button>${META.ext?'<button id="pmalp" class="sec">Aggiorna da Alpaca</button>':""}${src}`;
   if(pm){
     const base=ref||r.spot,gap=pm-base,gp=gap/base*100,dd=I?I.daily_sd/r.spot*base:null,k=dd?Math.abs(gap)/dd:null;
     const off=ref&&Math.abs(ref/r.spot-1)>0.03;
@@ -245,6 +248,15 @@ function pmCard(r){
       if(lv.length)b+=`<div class="mut" style="margin-top:6px">Il pre-market rispetto ai livelli della scadenza più vicina: ${lv.join(", ")}.</div>`}
   }
   return b+`<div class="mut" style="margin-top:6px">Non è una previsione dell'apertura: il prezzo pre-market è poco liquido. Controlla anche volume pre-market e notizie sul titolo.</div></div>`;
+}
+
+window.__alp=window.__alp||{};
+async function alpFetch(sym,force){
+  if(!META.ext||sym.startsWith("_"))return;
+  const c=window.__alp[sym];if(!force&&c&&c.at&&Date.now()-c.at<45000)return;
+  try{const r=await fetch("/api/ext?symbol="+encodeURIComponent(sym),{headers:hdrs()});const j=await r.json();j.at=Date.now();window.__alp[sym]=j}
+  catch(e){window.__alp[sym]={ok:false,error:"server non raggiungibile",at:Date.now()}}
+  if(LAST&&LAST.symbol===sym)show(LAST)
 }
 function show(r,saved){
   LAST=r;
@@ -307,13 +319,14 @@ function show(r,saved){
   <p><b>Modalità intraday</b>: considera solo le scadenze entro 7 giorni (al massimo 5) e gli strike entro ±2σ di una giornata di borsa dal prezzo (tra 2% e 10%). Serve a vedere i livelli che contano nella giornata, ma i risultati valgono solo dentro quella finestra; il max pain resta sulla catena intera.</p>
   <p>Tutti questi livelli sono riferimenti basati su dati ritardati e su ipotesi: non sono previsioni né consulenza finanziaria.</p></div></details></div>`;
   $("out").innerHTML=h+`</div>`+DEF;
+  const pa=$("pmalp");if(pa)pa.onclick=()=>{lsset("ol_pm_"+r.symbol,{ref:"",pm:""});alpFetch(r.symbol,true)};
   const pg=$("pmgo");if(pg)pg.onclick=()=>{lsset("ol_pm_"+r.symbol,{ref:$("pmref").value.trim(),pm:$("pmpx").value.trim()});show(LAST,saved)};
   const es=$("expsel");if(es)es.onchange=()=>{window.__exp=es.value;show(LAST,saved)};
 }
 async function go(sym){
   sym=(sym||$("sym").value).trim().toUpperCase();$("sym").value=sym;drawFavs();
   $("err").textContent="";$("go").disabled=true;$("go").textContent="Scarico…";
-  try{const r=await api(sym);r.share=(r.call_premium+r.put_premium)>0?100*r.call_premium/(r.call_premium+r.put_premium):50;saveSnap(r);lsset("ol_last_"+sym,r);window.__exp=null;show(r);oiSave(r)}
+  try{const r=await api(sym);r.share=(r.call_premium+r.put_premium)>0?100*r.call_premium/(r.call_premium+r.put_premium):50;saveSnap(r);lsset("ol_last_"+sym,r);window.__exp=null;show(r);oiSave(r);alpFetch(sym)}
   catch(e){$("err").textContent=e.message;const old=ls("ol_last_"+sym,null);if(old){window.__exp=null;show(old,true)}}
   $("go").disabled=false;$("go").textContent="Analizza";
 }

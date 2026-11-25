@@ -85,6 +85,78 @@ def analyse_doc(sym, doc):
     return res
 
 
+# ---------- Alpaca: prezzo pre-market / after-hours (chiavi nelle variabili d'ambiente di Render) ----------
+ALPACA_ID = os.environ.get("ALPACA_KEY_ID", "")
+ALPACA_SECRET = os.environ.get("ALPACA_SECRET_KEY", "")
+ALPACA_FEED = os.environ.get("ALPACA_FEED", "iex")          # "iex" = gratuito; "sip" solo con abbonamento
+EXT_CACHE = {}
+
+
+def et_offset_hours(dt_utc):
+    """Fuso di New York (-5 inverno, -4 estate) senza dipendere da tzdata."""
+    y = dt_utc.year
+    d = datetime.date(y, 3, 8)
+    while d.weekday() != 6: d += datetime.timedelta(days=1)          # seconda domenica di marzo
+    start = datetime.datetime(y, 3, d.day, 7, tzinfo=datetime.timezone.utc)    # 2:00 EST = 7:00 UTC
+    e = datetime.date(y, 11, 1)
+    while e.weekday() != 6: e += datetime.timedelta(days=1)          # prima domenica di novembre
+    end = datetime.datetime(y, 11, e.day, 6, tzinfo=datetime.timezone.utc)     # 2:00 EDT = 6:00 UTC
+    return -4 if start <= dt_utc < end else -5
+
+
+def parse_alpaca(snap):
+    """Da uno snapshot Alpaca ricava prezzo fuori orario, chiusura di riferimento e fase."""
+    lt = (snap or {}).get("latestTrade") or {}
+    if not lt.get("p") or not lt.get("t"):
+        raise ValueError("Alpaca non ha trovato scambi recenti per questo titolo.")
+    t = datetime.datetime.fromisoformat(lt["t"].replace("Z", "+00:00")).astimezone(datetime.timezone.utc)
+    et = t + datetime.timedelta(hours=et_offset_hours(t))
+    mins = et.hour * 60 + et.minute
+    phase = "pre-market" if mins < 570 else ("sessione regolare" if mins < 960 else "after-hours")
+    db, pdb = snap.get("dailyBar") or {}, snap.get("prevDailyBar") or {}
+    ref, ref_day = None, None
+    if db.get("c") and db.get("t"):
+        dbt = datetime.datetime.fromisoformat(db["t"].replace("Z", "+00:00")).astimezone(datetime.timezone.utc)
+        dbd = (dbt + datetime.timedelta(hours=et_offset_hours(dbt))).date()
+        if dbd < et.date() or (dbd == et.date() and phase == "after-hours"):
+            ref, ref_day = db["c"], dbd.isoformat()       # ultima chiusura già avvenuta
+    if ref is None and pdb.get("c"):
+        ref = pdb["c"]
+        pt = datetime.datetime.fromisoformat(pdb["t"].replace("Z", "+00:00")).astimezone(datetime.timezone.utc) if pdb.get("t") else None
+        ref_day = (pt + datetime.timedelta(hours=et_offset_hours(pt))).date().isoformat() if pt else None
+    if ref is None and db.get("c"):
+        ref, ref_day = db["c"], et.date().isoformat()
+    return {"ok": True, "price": float(lt["p"]), "t": int(t.timestamp()), "et": et.strftime("%H:%M"), "phase": phase,
+            "ref": float(ref) if ref else None, "ref_day": ref_day, "feed": ALPACA_FEED}
+
+
+def ext_quote(sym):
+    sym = sym.strip().upper()
+    if not re.match(r"^[A-Z.\-]{1,10}$", sym):
+        raise ValueError("Simbolo non valido.")
+    if DEMO:
+        return {"ok": True, "price": 148.67, "t": int(time.time()), "et": "06:09", "phase": "pre-market", "ref": 155.38, "ref_day": "demo", "feed": "demo"}
+    if not (ALPACA_ID and ALPACA_SECRET):
+        raise ValueError("Alpaca non è configurato sul server.")
+    now = time.time(); c = EXT_CACHE.get(sym)
+    if c and now - c[0] < 20: return c[1]
+    url = "https://data.alpaca.markets/v2/stocks/%s/snapshot?feed=%s" % (urllib.parse.quote(sym), urllib.parse.quote(ALPACA_FEED))
+    req = urllib.request.Request(url, headers={"APCA-API-KEY-ID": ALPACA_ID, "APCA-API-SECRET-KEY": ALPACA_SECRET, "accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=12) as r:
+            snap = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403): raise ValueError("Alpaca ha rifiutato le chiavi (controlla ID e secret su Render).")
+        if e.code == 429: raise ValueError("Alpaca: troppe richieste, riprova tra poco.")
+        raise ValueError("Alpaca ha risposto %s." % e.code)
+    except Exception:
+        raise ValueError("Alpaca non raggiungibile.")
+    res = parse_alpaca(snap)
+    EXT_CACHE[sym] = (now, res)
+    if len(EXT_CACHE) > 500: EXT_CACHE.clear()
+    return res
+
+
 def too_many(ip):
     now = time.time()
     with HLOCK:
@@ -142,7 +214,7 @@ class H(BaseHTTPRequestHandler):
         if path == "/health":
             return self.send(200, "ok", "text/plain")
         if path == "/api/meta":
-            return self.send(200, json.dumps({"needs_password": bool(PASSWORD), "list": DEFAULT_LIST, "demo": DEMO}))
+            return self.send(200, json.dumps({"needs_password": bool(PASSWORD), "list": DEFAULT_LIST, "demo": DEMO, "ext": bool(DEMO or (ALPACA_ID and ALPACA_SECRET))}))
         if path == "/api/chain":
             if PASSWORD and self.headers.get("X-Pass", "") != PASSWORD:
                 return self.send(401, json.dumps({"error": "Password errata."}))
@@ -155,6 +227,18 @@ class H(BaseHTTPRequestHandler):
                 return self.send(400, json.dumps({"error": str(e)}))
             except Exception as e:
                 return self.send(500, json.dumps({"error": "Errore interno: %s" % type(e).__name__}))
+        if path == "/api/ext":
+            if PASSWORD and self.headers.get("X-Pass", "") != PASSWORD:
+                return self.send(401, json.dumps({"error": "Password errata."}))
+            if too_many(self.ip()):
+                return self.send(429, json.dumps({"error": "Troppe richieste: aspetta un minuto."}))
+            m = re.search(r"(?:^|&)symbol=([^&]*)", qs)
+            try:
+                return self.send(200, json.dumps(ext_quote(urllib.parse.unquote(m.group(1)) if m else "")))
+            except ValueError as e:
+                return self.send(200, json.dumps({"ok": False, "error": str(e)}))
+            except Exception as e:
+                return self.send(200, json.dumps({"ok": False, "error": "Errore interno: %s" % type(e).__name__}))
         self.send(404, json.dumps({"error": "non trovato"}))
 
 
