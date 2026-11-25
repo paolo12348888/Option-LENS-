@@ -11,3 +11,7 @@ services:
         value: 3.12.3
       - key: APP_PASSWORD
         sync: false
+      - key: ALPACA_KEY_ID
+        sync: false
+      - key: ALPACA_SECRET_KEY
+        sync: false
