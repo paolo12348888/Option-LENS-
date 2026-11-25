@@ -35,7 +35,7 @@ svg{width:100%;height:auto;display:block} .age{font-size:12px}
 <h1><span>OptionsLens</span><small>v1.0 · <a href="#" id="thm" style="color:var(--mut)">tema</a></small></h1>
 <div class="mut">Cosa fanno le opzioni di un titolo: volumi, premi, muri di open interest, volatilità, attività insolita. Dati CBOE ritardati di circa 15 minuti, ultima sessione disponibile.</div>
 <div class="card" id="pwbox" style="display:none"><label>Password</label><input id="pw" type="password"></div>
-<div class="tabs"><button id="t1" class="on">Analisi</button><button id="t2">Scanner</button></div>
+<div class="tabs"><button id="t1" class="on">Analisi</button><button id="t2">Scanner</button><button id="t3">Rotazione</button></div>
 
 <div id="p1">
   <div class="card">
@@ -45,6 +45,13 @@ svg{width:100%;height:auto;display:block} .age{font-size:12px}
     <button id="go">Analizza</button><div id="err"></div>
   </div>
   <div id="out"></div>
+</div>
+
+<div id="p3" style="display:none">
+  <div class="card"><b>Rotazione tra settori</b>
+  <div class="mut">Confronta la tecnologia con gli altri settori e con i titoli di Stato su 1, 5 e 20 sedute. Dati Alpaca ritardati di 15 minuti. È un indizio statistico, non la prova di cosa fanno i grandi fondi.</div>
+  <button id="rotgo">Aggiorna</button><div id="roterr" class="bad"></div></div>
+  <div id="rotout"></div>
 </div>
 
 <div id="p2" style="display:none">
@@ -365,8 +372,27 @@ function drawScan(){
   document.querySelectorAll("#sout tr.click").forEach(t=>t.onclick=()=>{tab(1);go(t.dataset.s)});
 }
 
-function tab(i){$("p1").style.display=i==1?"":"none";$("p2").style.display=i==2?"":"none";$("t1").className=i==1?"on":"";$("t2").className=i==2?"on":""}
-$("t1").onclick=()=>tab(1);$("t2").onclick=()=>tab(2);
+
+/* rotazione tra settori */
+async function rotGo(){
+  const b=$("rotgo");b.disabled=true;b.textContent="Carico…";$("roterr").textContent="";
+  try{const r=await fetch("/api/rotation",{headers:hdrs()}),j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(j.error||"errore");
+    window.__rot=j;rotShow(j)}
+  catch(e){$("roterr").textContent=(e.message||"errore")+" — su Render servono le chiavi Alpaca."}
+  b.disabled=false;b.textContent="Aggiorna"}
+function rotShow(j){
+  const cell=v=>v==null?'<td class="mut">n/d</td>':`<td class="${v>=0?"ok":"bad"}"><b>${v>=0?"+":""}${n2(v)}%</b></td>`;
+  const rel=v=>v==null?"":`<br><span class="${v>=0?"ok":"bad"}" style="font-size:12px">${v>=0?"+":""}${n2(v)} vs S&P</span>`;
+  let h="";
+  if(j.read&&j.read.length)h+=`<div class="card"><b>Lettura</b>${j.read.map(x=>`<div style="margin-top:6px"><span class="mut">${x.label}:</span> ${x.text} <span class="mut">(${x.down}/${x.n} settori in calo)</span></div>`).join("")}<div class="mut" style="margin-top:8px">Rotazione = i soldi escono da un settore ed entrano in altri (altri settori in salita). Fuga dal rischio = scende quasi tutto e salgono solo i rifugi, come i titoli di Stato. Una sola seduta non basta per concludere: conta la persistenza su più giorni.</div></div>`;
+  const day=j.rows[0]?j.rows[0].day:"";
+  h+=`<div class="card"><b>Rendimenti</b> <span class="mut">(ultima barra: ${day})</span><table><tr><th>Settore</th><th>1 seduta</th><th>5 sedute</th><th>20 sedute</th></tr>`
+   +j.rows.map(r=>`<tr><td><b>${r.sym}</b><br><span class="mut">${r.name}</span></td>${cell(r.r1)}<td class="${r.r5==null?"mut":r.r5>=0?"ok":"bad"}">${r.r5==null?"n/d":'<b>'+(r.r5>=0?"+":"")+n2(r.r5)+"%</b>"}${rel(r.rel5)}</td><td class="${r.r20==null?"mut":r.r20>=0?"ok":"bad"}">${r.r20==null?"n/d":'<b>'+(r.r20>=0?"+":"")+n2(r.r20)+"%</b>"}${rel(r.rel20)}</td></tr>`).join("")
+   +`</table><div class="mut">"vs S&P" = differenza rispetto all'S&P 500 (SPY) nello stesso periodo: positiva, il settore fa meglio dell'indice. Se la seduta di oggi è ancora in corso, l'ultima barra è parziale e ritardata di 15 minuti.</div></div>`;
+  $("rotout").innerHTML=h}
+function tab(i){$("p1").style.display=i==1?"":"none";$("p2").style.display=i==2?"":"none";$("p3").style.display=i==3?"":"none";$("t1").className=i==1?"on":"";$("t2").className=i==2?"on":"";$("t3").className=i==3?"on":"";if(i==3&&!window.__rot)rotGo()}
+$("t1").onclick=()=>tab(1);$("t2").onclick=()=>tab(2);$("t3").onclick=()=>tab(3);$("rotgo").onclick=()=>rotGo();
 
 async function init(){
   try{META=await (await fetch("/api/meta")).json()}catch(e){$("err").textContent="Server non raggiungibile (se è fermo, aspetta un minuto e ricarica)."}

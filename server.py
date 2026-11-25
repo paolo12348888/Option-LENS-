@@ -199,6 +199,92 @@ def ext_quote(sym):
     return res
 
 
+# ---------- Rotazione tra settori (ETF, barre giornaliere Alpaca SIP ritardate) ----------
+ROT_SYMS = ["SPY", "QQQ", "IWM", "XLK", "SMH", "XLF", "XLE", "XLV", "XLP", "XLU", "XLY", "XLI", "TLT"]
+ROT_NAMES = {"SPY": "S&P 500", "QQQ": "Nasdaq 100", "IWM": "Piccole capitalizzazioni", "XLK": "Tecnologia", "SMH": "Semiconduttori", "XLF": "Finanza",
+             "XLE": "Energia", "XLV": "Sanità", "XLP": "Beni di prima necessità", "XLU": "Utility", "XLY": "Consumi discrezionali", "XLI": "Industria", "TLT": "Titoli di Stato lunghi"}
+ROT_CACHE = {}
+
+
+def _ret(c, n):
+    return round((c[-1] / c[-1 - n] - 1) * 100, 2) if len(c) > n and c[-1 - n] else None
+
+
+def rotation_from_bars(bars):
+    """bars: {simbolo: [{t, c}, ...]} in ordine di data crescente. Restituisce rendimenti e una lettura prudente."""
+    rows = []
+    for sym in ROT_SYMS:
+        b = bars.get(sym) or []
+        c = [x["c"] for x in b]
+        if len(c) < 2: continue
+        rows.append({"sym": sym, "name": ROT_NAMES[sym], "last": round(c[-1], 2), "day": b[-1]["t"][:10], "r1": _ret(c, 1), "r5": _ret(c, 5), "r20": _ret(c, 20)})
+    by = {r["sym"]: r for r in rows}
+    spy = by.get("SPY")
+    for r in rows:
+        for k in ("r5", "r20"):
+            r["rel" + k[1:]] = None if (spy is None or r[k] is None or spy[k] is None) else round(r[k] - spy[k], 2)
+    sectors = [by[x] for x in ("XLK", "XLF", "XLE", "XLV", "XLP", "XLU", "XLY", "XLI") if x in by]
+    out = {"ok": True, "rows": rows, "read": None}
+    if spy and sectors and by.get("XLK"):
+        def avg(keys, f):
+            v = [by[k][f] for k in keys if k in by and by[k][f] is not None]
+            return sum(v) / len(v) if v else None
+        notes = []
+        for f, lab in (("r1", "oggi/ultima seduta"), ("r5", "ultime 5 sedute")):
+            down = sum(1 for x in sectors if x[f] is not None and x[f] < 0)
+            dfn = avg(("XLV", "XLP", "XLU"), f); tech = by["XLK"][f]; sp = spy[f]
+            if tech is None or sp is None or dfn is None: continue
+            if down >= len(sectors) - 1 and sp < -0.5:
+                t = "calo generalizzato (%d settori su %d in negativo): più simile a una fuga dal rischio che a una rotazione" % (down, len(sectors))
+            elif tech < sp - 0.8 and dfn > 0 and down <= len(sectors) // 2 + 1:
+                t = "la tecnologia perde terreno e i difensivi salgono: indizio di rotazione fuori dalla tecnologia"
+            elif tech > sp + 0.8 and dfn < 0:
+                t = "la tecnologia guida e i difensivi cedono: indizio di rotazione verso la tecnologia"
+            else:
+                t = "nessuno schema netto di rotazione"
+            notes.append({"label": lab, "text": t, "down": down, "n": len(sectors)})
+        out["read"] = notes
+    return out
+
+
+def rotation():
+    if DEMO:
+        import random as _r
+        _r.seed(7); bars = {}
+        for i, sym in enumerate(ROT_SYMS):
+            p = 100 + i * 10; arr = []
+            for d in range(30):
+                p *= 1 + _r.uniform(-0.01, 0.01) - (0.012 if (sym in ("XLK", "SMH", "QQQ") and d > 24) else 0)
+                arr.append({"t": (datetime.date(2026, 11, 25) - datetime.timedelta(days=29 - d)).isoformat() + "T05:00:00Z", "c": p})
+            bars[sym] = arr
+        return rotation_from_bars(bars)
+    if not (ALPACA_ID and ALPACA_SECRET):
+        raise ValueError("Alpaca non è configurato sul server.")
+    now = time.time(); c = ROT_CACHE.get("r")
+    if c and now - c[0] < 600: return c[1]
+    end = datetime.datetime.fromtimestamp(now - 16 * 60, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    st = datetime.datetime.fromtimestamp(now - 50 * 86400, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    bars, token = {}, None
+    try:
+        for _ in range(6):
+            p = {"symbols": ",".join(ROT_SYMS), "timeframe": "1Day", "start": st, "end": end, "limit": 10000, "feed": "sip", "adjustment": "all"}
+            if token: p["page_token"] = token
+            j = _alp_get("/v2/stocks/bars", p)
+            for k, v in (j.get("bars") or {}).items(): bars.setdefault(k, []).extend(v)
+            token = j.get("next_page_token")
+            if not token: break
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403): raise ValueError("Alpaca ha rifiutato le chiavi o il piano non include questi dati.")
+        if e.code == 429: raise ValueError("Alpaca: troppe richieste, riprova tra poco.")
+        raise ValueError("Alpaca ha risposto %s." % e.code)
+    except Exception:
+        raise ValueError("Alpaca non raggiungibile.")
+    res = rotation_from_bars(bars)
+    if not res["rows"]: raise ValueError("Alpaca non ha restituito dati per i settori.")
+    ROT_CACHE["r"] = (now, res)
+    return res
+
+
 def too_many(ip):
     now = time.time()
     with HLOCK:
@@ -277,6 +363,17 @@ class H(BaseHTTPRequestHandler):
             m = re.search(r"(?:^|&)symbol=([^&]*)", qs)
             try:
                 return self.send(200, json.dumps(ext_quote(urllib.parse.unquote(m.group(1)) if m else "")))
+            except ValueError as e:
+                return self.send(200, json.dumps({"ok": False, "error": str(e)}))
+            except Exception as e:
+                return self.send(200, json.dumps({"ok": False, "error": "Errore interno: %s" % type(e).__name__}))
+        if path == "/api/rotation":
+            if PASSWORD and self.headers.get("X-Pass", "") != PASSWORD:
+                return self.send(401, json.dumps({"error": "Password errata."}))
+            if too_many(self.ip()):
+                return self.send(429, json.dumps({"error": "Troppe richieste: aspetta un minuto."}))
+            try:
+                return self.send(200, json.dumps(rotation()))
             except ValueError as e:
                 return self.send(200, json.dumps({"ok": False, "error": str(e)}))
             except Exception as e:
