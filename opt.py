@@ -335,7 +335,7 @@ def _check(name, v, lo, hi):
 
 def simulate_crash_rebalance(spot, shares, iv, shock, iv_jump=0.15, hedge="bps", reinvest=0.5, dte=45, crash_days=5,
                              long_pct=None, short_pct=None, contracts=None, r=0.04, slip=0.0, skew=0.0, hedge_ratio=0.5,
-                             cost_basis=None):
+                             cost_basis=None, leverage=1.0):
     """Simula un crollo e il ribilanciamento in tre passi: 1) stato iniziale, 2) shock e copertura, 3) chiusura e riallocazione.
     shock è negativo (es. -0.2 = -20%); iv e iv_jump sono decimali (0.35 = 35%). Restituisce un dizionario con i passi,
     la curva P&L al variare dello shock e il punto di pareggio della copertura. Non invia ordini: è un calcolo."""
@@ -346,9 +346,10 @@ def simulate_crash_rebalance(spot, shares, iv, shock, iv_jump=0.15, hedge="bps",
     slip = _check("Lo slippage", slip, 0.0, 0.5); skew = _check("Lo skew", skew, 0.0, 0.5); r = _check("Il tasso", r, 0.0, 0.2)
     hedge_ratio = _check("La quota di delta hedge", hedge_ratio, 0.0, 1.0)
     cost = None if cost_basis is None else _check("Il prezzo di carico", cost_basis, 0.01, 1e7)
+    leverage = _check("La leva", leverage, 1.0, 30.0)
     if hedge not in HEDGES:
         raise ValueError("Copertura non valida: scegli tra %s." % ", ".join(HEDGES))
-    n_con = max(1, int(round(shares / 100.0))) if contracts is None else int(_check("I contratti", contracts, 1, 1e7))
+    n_con = max(0.01, shares / 100.0) if contracts is None else _check("I contratti", contracts, 0.001, 1e7)
     legs, lp, sp = [], None, None
     if hedge in HEDGE_DEFAULTS:
         lp = HEDGE_DEFAULTS[hedge][0] if long_pct is None else _check("Lo strike acquistato (%)", long_pct, 0.3, 1.2)
@@ -402,6 +403,26 @@ def simulate_crash_rebalance(spot, shares, iv, shock, iv_jump=0.15, hedge="bps",
                "pnl_unhedged_after_pct": round((shares * s1 / inv - 1) * 100, 2), "pnl_hedged_after": round(equity - inv, 2),
                "pnl_hedged_after_pct": round((equity / inv - 1) * 100, 2), "avg_cost_after": round((inv + cash) / new_shares, 2),
                "recovery_price_cost": round((inv - left) / new_shares, 2)}
+    lev = None
+    if leverage > 1:                                                     # CFD o conto a margine: il margine è una frazione del valore
+        basis = shares * (cost or spot)
+        mg = basis / leverage
+        eq_now, eq_u, eq_h = mg + (v0 - basis), mg + (shares * s1 - basis), mg + (equity - basis)
+        pc = lambda e: round((e / mg - 1) * 100, 2)
+        lev = {"leverage": leverage, "margin": round(mg, 2), "equity_now": round(eq_now, 2), "equity_now_pct": pc(eq_now),
+               "equity_unhedged_after": round(eq_u, 2), "equity_unhedged_after_pct": pc(eq_u),
+               "equity_hedged_after": round(eq_h, 2), "equity_hedged_after_pct": pc(eq_h),
+               "stopout_shock": round((basis - 0.5 * mg) / v0 - 1, 4), "wipeout_shock": round((basis - mg) / v0 - 1, 4),
+               "stopout_unhedged": eq_u <= 0.5 * mg, "wiped_out_unhedged": eq_u <= 0}
+    warns = []
+    if legs and contracts is None and abs(n_con - round(n_con)) > 1e-9:
+        if shares < 100:
+            warns.append("Le opzioni quotate sono a lotti da 100 azioni: con %g azioni un contratto reale coprirebbe %g volte la posizione. "
+                         "Qui la copertura è simulata in proporzione (%g contratti): non è replicabile con opzioni vere." % (
+                             round(shares, 2), round(100 / shares, 1), round(n_con, 4)))
+        else:
+            warns.append("Le opzioni quotate sono a lotti da 100 azioni: la copertura è simulata in proporzione (%g contratti), "
+                         "con opzioni vere dovresti arrotondare." % round(n_con, 4))
     notes = ["Modello Black-Scholes con IV unica%s: in un crollo vero gli spread bid/ask si allargano, la IV sale in modo diverso strike per strike "
              "e ci sono gap notturni. È utile per capire la logica del ribilanciamento, non per prevedere il centesimo." % (" e skew semplice" if skew > 0 else ""),
              "Il salto di IV scelto si applica per intero allo shock scelto e in proporzione per shock più piccoli."]
@@ -411,8 +432,8 @@ def simulate_crash_rebalance(spot, shares, iv, shock, iv_jump=0.15, hedge="bps",
         notes.append("Il delta hedge è simulato come vendita di una quota delle azioni: non include costi di prestito titoli o margine.")
     return {
         "inputs": {"spot": spot, "shares": shares, "iv": iv, "shock": shock, "iv_jump": iv_jump, "hedge": hedge, "reinvest": reinvest,
-                   "dte": dte, "crash_days": crash_days, "contracts": n_con if legs else 0, "long_pct": lp, "short_pct": sp, "slip": slip, "skew": skew},
-        "legs": [{"side": "acquisto" if s > 0 else "vendita", "k": round(K, 2), "qty": q * n_con} for s, K, q in legs],
+                   "dte": dte, "crash_days": crash_days, "contracts": round(n_con, 4) if legs else 0, "long_pct": lp, "short_pct": sp, "slip": slip, "skew": skew, "leverage": leverage},
+        "legs": [{"side": "acquisto" if s > 0 else "vendita", "k": round(K, 2), "qty": round(q * n_con, 4)} for s, K, q in legs],
         "steps": [
             {"step": 1, "name": "Stato iniziale", "spot": round(spot, 2), "shares": shares, "asset_value": round(v0, 2), "hedge_cost": round(h_cost, 2)},
             {"step": 2, "name": "Shock e coperture", "spot": round(s1, 2), "asset_value": round(shares * s1, 2), "asset_pnl": round(loss, 2),
@@ -422,4 +443,4 @@ def simulate_crash_rebalance(spot, shares, iv, shock, iv_jump=0.15, hedge="bps",
              "shares_added_pct": round((new_shares / shares - 1) * 100, 2), "avg_cost": round((v0 + cash) / new_shares, 2),
              "cash_left": round(left, 2), "equity": round(equity, 2), "recovery_price": round(recov, 2),
              "recovery_price_unhedged": round(spot, 2)}],
-        "position": pos, "curve": curve, "breakeven_shock": be, "worst_hedge_shock": round(worst[0], 4), "worst_hedge_pnl": round(worst[1], 2), "notes": notes}
+        "position": pos, "leverage": lev, "warnings": warns, "curve": curve, "breakeven_shock": be, "worst_hedge_shock": round(worst[0], 4), "worst_hedge_pnl": round(worst[1], 2), "notes": notes}

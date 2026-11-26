@@ -385,7 +385,7 @@ def stress_query(qs):
         spot=spot, shares=shares, iv=iv, shock=num("shock"), iv_jump=num("iv_jump", 0.15), hedge=(q.get("hedge") or ["bps"])[0],
         reinvest=num("reinvest", 0.5), dte=dte if dte else 45, crash_days=num("crash_days", 5), long_pct=opt_num("long_pct"),
         short_pct=opt_num("short_pct"), contracts=opt_num("contracts"), slip=num("slip", 0.03), skew=num("skew", 0.0),
-        hedge_ratio=num("hedge_ratio", 0.5), cost_basis=cost)
+        hedge_ratio=num("hedge_ratio", 0.5), cost_basis=cost, leverage=num("leverage", 1.0))
     if cost:
         ctx["cost_source"] = cost_src
     res["context"] = ctx

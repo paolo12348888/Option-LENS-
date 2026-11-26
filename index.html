@@ -60,6 +60,7 @@ svg{width:100%;height:auto;display:block} .age{font-size:12px}
   <label>Titolo (es. NVDA)</label><input id="st_sym" autocapitalize="characters">
   <div class="g2"><div><label>Azioni possedute</label><input id="st_sh" inputmode="decimal" placeholder="es. 100"></div><div><label>oppure $ investiti</label><input id="st_usd" inputmode="decimal" placeholder="es. 10000"></div></div>
   <div class="g2"><div><label>Prezzo di carico (facoltativo)</label><input id="st_cost" inputmode="decimal"></div><div><label>oppure data di acquisto</label><input id="st_date" type="date"></div></div>
+  <label>Leva (5 = 1:5, vuoto = nessuna)</label><input id="st_lv" inputmode="decimal" placeholder="es. 5">
   <div class="mut">Prezzo e volatilità li scarica l'app da sola (Alpaca e CBOE). Con la data usa la chiusura Alpaca di quel giorno.</div>
   <label>Shock: <b id="st_shv">-20%</b></label><input type="range" id="st_shock" min="-60" max="-1" value="-20" style="padding:0">
   <label>Salto di IV: <b id="st_ijv">+15</b> punti</label><input type="range" id="st_ij" min="0" max="60" value="15" style="padding:0">
@@ -444,6 +445,17 @@ function stShow(j){
    <div class="row"><span>Dopo lo shock, con copertura</span><b class="${cls(P.pnl_hedged_after)}">${sg(P.pnl_hedged_after)} (${n2(P.pnl_hedged_after_pct)}%)</b></div>
    <div class="row"><span>Prezzo per tornare al capitale investito</span><b>${n2(P.recovery_price_cost)} $</b></div><div class="mut">Senza copertura servirebbe tornare a ${n2(P.cost_basis)} $.</div>
    <div class="row"><span>Costo medio dopo il ribilanciamento</span><b>${n2(P.avg_cost_after)} $</b></div></div>`;
+  if(j.warnings&&j.warnings.length)pre+=`<div class="card"><b class="warn">Attenzione</b>${j.warnings.map(x=>`<div class="mut">• ${x}</div>`).join("")}</div>`;
+  const L=j.leverage;
+  if(L){const lv=s=>s>=0?"già oltre questo livello":"se il prezzo scende sotto "+n2(a.spot*(1+s))+" $ ("+n2(s*100)+"%)";
+   pre+=`<div class="card"><b>Leva 1:${n0(L.leverage)}</b> <span class="mut">(margine impegnato ${n0(L.margin)} $)</span>
+   <div class="row"><span>Oggi, sul margine</span><b class="${cls(L.equity_now_pct)}">${n2(L.equity_now_pct)}%</b></div>
+   <div class="row"><span>Dopo lo shock, non coperto</span><b class="${cls(L.equity_unhedged_after_pct)}">${n2(L.equity_unhedged_after_pct)}% sul margine</b></div>
+   <div class="row"><span>Dopo lo shock, con copertura</span><b class="${cls(L.equity_hedged_after_pct)}">${n2(L.equity_hedged_after_pct)}% sul margine</b></div>
+   <div class="row"><span>Chiusura forzata stimata (margine al 50%)</span><b class="warn">${lv(L.stopout_shock)}</b></div>
+   <div class="row"><span>Margine azzerato</span><b class="bad">${lv(L.wipeout_shock)}</b></div>
+   ${L.wiped_out_unhedged?'<div class="bad">Con questo shock, senza copertura, il margine è azzerato.</div>':L.stopout_unhedged?'<div class="warn">Con questo shock, senza copertura, il broker chiuderebbe di norma la posizione.</div>':""}
+   <div class="mut">La leva non cambia i dollari persi: cambia il capitale impegnato, quindi la percentuale sul margine. La soglia di chiusura forzata cambia da broker a broker: controlla la tua.</div></div>`}
   let h=pre+`<div class="card"><b>1 · Stato iniziale</b>
    <div class="row"><span>Prezzo</span><b>${n2(a.spot)} $</b></div><div class="row"><span>Azioni</span><b>${n0(a.shares)}</b></div>
    <div class="row"><span>Valore</span><b>${n0(a.asset_value)} $</b></div>
@@ -476,7 +488,7 @@ async function stRun(){
       hedge:$("st_h").value,crash_days:v("st_cd"),slip:String((parseFloat(v("st_sl"))||0)/100),skew:String((parseFloat(v("st_sk"))||0)/100)});
     if(sym)p.set("symbol",sym);
     if(v("st_sh"))p.set("shares",v("st_sh"));if(v("st_usd"))p.set("usd",v("st_usd"));if(v("st_cost"))p.set("cost",v("st_cost"));
-    if($("st_date").value)p.set("date",$("st_date").value);if(v("st_nc"))p.set("contracts",v("st_nc"));
+    if($("st_date").value)p.set("date",$("st_date").value);if(v("st_nc"))p.set("contracts",v("st_nc"));if(v("st_lv"))p.set("leverage",v("st_lv"));
     if(v("st_spot"))p.set("spot",v("st_spot"));if(v("st_iv"))p.set("iv",String(parseFloat(v("st_iv"))/100));if(v("st_dte"))p.set("dte",v("st_dte"));
     let j;
     try{j=await call(p)}

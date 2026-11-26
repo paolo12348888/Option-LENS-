@@ -96,6 +96,19 @@ class Stress(unittest.TestCase):
         self.assertLess(p["recovery_price_cost"], 80.0)
         self.assertIsNone(self.sim()["position"])
 
+    def test_small_position_hedge_is_proportional(self):
+        r = self.sim(shares=4, shock=-0.2)
+        self.assertAlmostEqual(r["inputs"]["contracts"], 0.04); self.assertTrue(r["warnings"])
+        self.assertLess(r["steps"][0]["hedge_cost"], 0.2 * r["steps"][0]["asset_value"])    # non più del valore della posizione
+
+    def test_leverage_block(self):
+        r = self.sim(shares=4, spot=149.13, cost_basis=141.73, leverage=5, shock=-0.3, hedge="none")
+        L = r["leverage"]; basis = 4 * 141.73
+        self.assertAlmostEqual(L["margin"], basis / 5, places=2)
+        self.assertAlmostEqual(L["equity_now_pct"], (4 * 149.13 - basis) / (basis / 5) * 100, places=1)    # ~ +26%
+        self.assertTrue(L["wiped_out_unhedged"] and L["stopout_unhedged"]); self.assertLess(L["wipeout_shock"], 0)
+        self.assertLess(L["wipeout_shock"], L["stopout_shock"]); self.assertIsNone(self.sim()["leverage"])
+
     def test_validation(self):
         for bad in (dict(shock=-0.95), dict(shock=0.1), dict(hedge="xyz"), dict(iv=0), dict(reinvest=1.5), dict(spot=-1), dict(long_pct=0.7, short_pct=0.9)):
             with self.assertRaises(ValueError): self.sim(**bad)

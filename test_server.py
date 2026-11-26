@@ -18,6 +18,10 @@ class S(unittest.TestCase):
         r = server.stress_query("spot=100&iv=0.3&shares=500&shock=-0.2")
         self.assertEqual(r["context"], {}); self.assertIsNone(r["position"])
 
+    def test_leverage_passthrough(self):
+        r = server.stress_query("spot=149.13&iv=0.5&shares=4&cost=141.73&leverage=5&shock=-0.2&hedge=delta")
+        self.assertEqual(r["leverage"]["leverage"], 5.0); self.assertAlmostEqual(r["leverage"]["margin"], 4 * 141.73 / 5, places=2)
+
     def test_errors(self):
         for q in ("symbol=NVDA&shock=-0.2", "symbol=@@&shares=1&shock=-0.2", "symbol=NVDA&shares=1&shock=-0.2&date=2030-01-01",
                   "symbol=NVDA&shares=1&shock=-0.2&date=ieri", "shares=1&shock=-0.2"):
