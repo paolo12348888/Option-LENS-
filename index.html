@@ -163,7 +163,7 @@ const OIKEEP=7,OISYMS=25;
 function oiStore(){return ls("ol_oi",{})}
 function oiRows(r){const o={};for(const [e,rows] of Object.entries(r.by_exp||{})){o[e]=rows.filter(x=>Math.abs(x.k/r.spot-1)<=0.15).map(x=>[x.k,x.coi,x.poi,x.cvol,x.pvol])}return o}
 function oiCompare(r){
-  const st=oiStore()[r.symbol]||{},ds=Object.keys(st).filter(d=>d<r.asof).sort();
+  const st=oiStore()[r.symbol]||{},ds=Object.keys(st).filter(d=>d<(r.trade_date||r.asof)).sort();
   if(!ds.length)return null;
   const prev=ds[ds.length-1],cur=oiRows(r),old=st[prev],out=[];let dc=0,dp=0,same=0,n=0;
   for(const [e,rows] of Object.entries(cur)){
@@ -174,7 +174,7 @@ function oiCompare(r){
   return {prev,dc,dp,n,stale:n>0&&same===n,rows:out.filter(x=>Math.abs(x.d)>=100).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d)).slice(0,10)};
 }
 function oiSave(r){
-  const all=oiStore(),s=all[r.symbol]||{};s[r.asof]=oiRows(r);
+  const all=oiStore(),s=all[r.symbol]||{};s[r.trade_date||r.asof]=oiRows(r);
   const ds=Object.keys(s).sort();while(ds.length>OIKEEP)delete s[ds.shift()];
   delete all[r.symbol];all[r.symbol]=s;                       // l'ultimo usato va in fondo
   const ks=Object.keys(all);while(ks.length>OISYMS)delete all[ks.shift()];
