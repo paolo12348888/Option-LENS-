@@ -286,6 +286,30 @@ def rotation():
     return res
 
 
+def stress_query(qs):
+    """Parametri della query -> simulazione di crollo e ribilanciamento (calcolo puro, nessun dato esterno)."""
+    q = urllib.parse.parse_qs(qs)
+
+    def num(k, d=None):
+        if k not in q or q[k][0] == "":
+            if d is None:
+                raise ValueError("Manca il parametro %s." % k)
+            return d
+        try:
+            return float(q[k][0])
+        except ValueError:
+            raise ValueError("Parametro non valido: %s." % k)
+
+    def opt_num(k):
+        return num(k, 0.0) or None if k in q and q[k][0] != "" else None
+    hedge = (q.get("hedge") or ["bps"])[0]
+    contracts = opt_num("contracts")
+    return opt.simulate_crash_rebalance(
+        spot=num("spot"), shares=num("shares"), iv=num("iv"), shock=num("shock"), iv_jump=num("iv_jump", 0.15), hedge=hedge,
+        reinvest=num("reinvest", 0.5), dte=num("dte", 45), crash_days=num("crash_days", 5), long_pct=opt_num("long_pct"),
+        short_pct=opt_num("short_pct"), contracts=contracts, slip=num("slip", 0.03), skew=num("skew", 0.0), hedge_ratio=num("hedge_ratio", 0.5))
+
+
 def too_many(ip):
     now = time.time()
     with HLOCK:
@@ -379,6 +403,17 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, json.dumps({"ok": False, "error": str(e)}))
             except Exception as e:
                 return self.send(200, json.dumps({"ok": False, "error": "Errore interno: %s" % type(e).__name__}))
+        if path == "/api/stress":
+            if PASSWORD and self.headers.get("X-Pass", "") != PASSWORD:
+                return self.send(401, json.dumps({"error": "Password errata."}))
+            if too_many(self.ip()):
+                return self.send(429, json.dumps({"error": "Troppe richieste: aspetta un minuto."}))
+            try:
+                return self.send(200, json.dumps(stress_query(qs)))
+            except ValueError as e:
+                return self.send(400, json.dumps({"error": str(e)}))
+            except Exception as e:
+                return self.send(500, json.dumps({"error": "Errore interno: %s" % type(e).__name__}))
         self.send(404, json.dumps({"error": "non trovato"}))
 
 

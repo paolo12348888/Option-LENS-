@@ -285,3 +285,131 @@ def analyse(doc, symbol, today=None):
             "wall_calls": [{"k": c["k"], "oi": c["oi"]} for c in wall_c], "wall_puts": [{"k": c["k"], "oi": c["oi"]} for c in wall_p],
             "unusual": unusual, "unusual_count": len(un), "by_exp": by_exp, "skew": skew, "gex": round(gex / 1e6, 1), "score": score, "label": label, "why": why,
             "contracts": len(cs)}
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Stress test e ribilanciamento dopo un crollo (simulazione educativa, nessun ordine reale). Solo libreria standard.
+# ---------------------------------------------------------------------------------------------------------------------
+def norm_cdf(x):
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def bs_price(S, K, T, iv, r=0.0, kind="P"):
+    """Prezzo Black-Scholes di una call ("C") o put ("P") europea. A scadenza (T<=0) vale il valore intrinseco."""
+    if T <= 0 or iv <= 0 or S <= 0 or K <= 0:
+        return max(0.0, S - K) if kind == "C" else max(0.0, K - S)
+    sd = iv * math.sqrt(T)
+    d1 = (math.log(S / K) + (r + 0.5 * iv * iv) * T) / sd
+    d2 = d1 - sd
+    disc = math.exp(-r * T)
+    if kind == "C":
+        return S * norm_cdf(d1) - K * disc * norm_cdf(d2)
+    return K * disc * norm_cdf(-d2) - S * norm_cdf(-d1)
+
+
+# strike di default in % del prezzo: (acquistata, venduta)
+HEDGE_DEFAULTS = {"bps": (0.95, 0.80), "backspread": (0.85, 0.95)}
+HEDGES = ("none", "bps", "backspread", "delta")
+
+
+def _skewed_iv(S, K, iv, skew):
+    """IV di uno strike: IV base + skew (punti di volatilità, in decimale) ogni 10% di strike sotto il prezzo."""
+    return max(0.01, iv + skew * max(0.0, (S - K) / S) / 0.10)
+
+
+def _legs_value(legs, S, T, iv, skew, r, slip, dirn):
+    """Valore per azione della struttura. dirn=+1 apertura (si paga l'ask), dirn=-1 chiusura (si incassa il bid).
+    legs: (segno, strike, quantità): segno +1 acquistata, -1 venduta. slip = frazione di prezzo persa tra denaro e lettera."""
+    tot = 0.0
+    for sign, K, qty in legs:
+        p = bs_price(S, K, T, _skewed_iv(S, K, iv, skew), r, "P")
+        tot += sign * qty * p * (1 + dirn * slip * sign)
+    return tot
+
+
+def _check(name, v, lo, hi):
+    if not isinstance(v, (int, float)) or v != v or v < lo or v > hi:
+        raise ValueError("%s deve essere tra %s e %s." % (name, lo, hi))
+    return float(v)
+
+
+def simulate_crash_rebalance(spot, shares, iv, shock, iv_jump=0.15, hedge="bps", reinvest=0.5, dte=45, crash_days=5,
+                             long_pct=None, short_pct=None, contracts=None, r=0.04, slip=0.0, skew=0.0, hedge_ratio=0.5):
+    """Simula un crollo e il ribilanciamento in tre passi: 1) stato iniziale, 2) shock e copertura, 3) chiusura e riallocazione.
+    shock è negativo (es. -0.2 = -20%); iv e iv_jump sono decimali (0.35 = 35%). Restituisce un dizionario con i passi,
+    la curva P&L al variare dello shock e il punto di pareggio della copertura. Non invia ordini: è un calcolo."""
+    spot = _check("Il prezzo", spot, 0.01, 1e7); shares = _check("Il numero di azioni", shares, 1, 1e9)
+    iv = _check("La IV", iv, 0.01, 5.0); shock = _check("Lo shock", shock, -0.9, 0.0)
+    iv_jump = _check("Il salto di IV", iv_jump, 0.0, 1.5); reinvest = _check("La quota reinvestita", reinvest, 0.0, 1.0)
+    dte = int(_check("I giorni a scadenza", dte, 7, 365)); crash_days = int(_check("I giorni fino al crollo", crash_days, 0, dte - 1))
+    slip = _check("Lo slippage", slip, 0.0, 0.5); skew = _check("Lo skew", skew, 0.0, 0.5); r = _check("Il tasso", r, 0.0, 0.2)
+    hedge_ratio = _check("La quota di delta hedge", hedge_ratio, 0.0, 1.0)
+    if hedge not in HEDGES:
+        raise ValueError("Copertura non valida: scegli tra %s." % ", ".join(HEDGES))
+    n_con = max(1, int(round(shares / 100.0))) if contracts is None else int(_check("I contratti", contracts, 1, 1e7))
+    legs, lp, sp = [], None, None
+    if hedge in HEDGE_DEFAULTS:
+        lp = HEDGE_DEFAULTS[hedge][0] if long_pct is None else _check("Lo strike acquistato (%)", long_pct, 0.3, 1.2)
+        sp = HEDGE_DEFAULTS[hedge][1] if short_pct is None else _check("Lo strike venduto (%)", short_pct, 0.3, 1.2)
+        if hedge == "bps":
+            if lp <= sp: raise ValueError("Nel bear put spread la put acquistata deve avere strike più alto di quella venduta.")
+            legs = [(1, spot * lp, 1), (-1, spot * sp, 1)]
+        else:
+            if sp <= lp: raise ValueError("Nel put ratio backspread la put venduta deve avere strike più alto delle due acquistate.")
+            legs = [(-1, spot * sp, 1), (1, spot * lp, 2)]
+    T0, T1 = dte / 365.0, max(dte - crash_days, 1) / 365.0
+
+    def scenario(sh):
+        s1 = spot * (1 + sh)
+        loss = shares * (s1 - spot)
+        if hedge == "none":
+            h_cost = h_val = h_pnl = 0.0
+        elif hedge == "delta":
+            h_cost = h_val = 0.0
+            h_pnl = -hedge_ratio * shares * (s1 - spot)                  # vendita simulata di una quota delle azioni
+        else:
+            h_cost = n_con * 100 * _legs_value(legs, spot, T0, iv, skew, r, slip, +1)
+            jump = iv_jump * (min(1.0, sh / shock) if shock < 0 else 0.0)      # il salto di IV cresce con lo shock, fino al valore scelto
+            h_val = n_con * 100 * _legs_value(legs, s1, T1, iv + jump, skew, r, slip, -1)
+            h_pnl = h_val - h_cost
+        return s1, loss, h_cost, h_val, h_pnl
+
+    s1, loss, h_cost, h_val, h_pnl = scenario(shock)
+    v0 = shares * spot
+    cash = max(0.0, h_pnl) * reinvest                                    # si reinveste solo un guadagno, mai una perdita
+    new_shares = shares + cash / s1
+    left = h_pnl - cash
+    equity = new_shares * s1 + left                                      # = v0 + perdita + P&L copertura
+    recov = (v0 - left) / new_shares                                     # prezzo a cui si torna al valore iniziale
+    curve = []
+    for i in range(0, 21):
+        sh = -0.02 * i
+        a = scenario(sh)
+        curve.append({"shock": round(sh, 4), "unhedged": round(a[1], 2), "hedged": round(a[1] + a[4], 2), "hedge_pnl": round(a[4], 2)})
+    scan = [(-0.005 * i, scenario(-0.005 * i)[4]) for i in range(0, 181)]
+    be, seen_neg = None, False
+    for sh, p in scan:
+        if p < 0: seen_neg = True
+        elif seen_neg: be = round(sh, 4); break
+    worst = min(scan, key=lambda x: x[1])
+    notes = ["Modello Black-Scholes con IV unica%s: in un crollo vero gli spread bid/ask si allargano, la IV sale in modo diverso strike per strike "
+             "e ci sono gap notturni. È utile per capire la logica del ribilanciamento, non per prevedere il centesimo." % (" e skew semplice" if skew > 0 else ""),
+             "Il salto di IV scelto si applica per intero allo shock scelto e in proporzione per shock più piccoli."]
+    if hedge == "backspread":
+        notes.append("Il backspread può perdere per cali moderati: guarda la zona di perdita nel grafico.")
+    if hedge == "delta":
+        notes.append("Il delta hedge è simulato come vendita di una quota delle azioni: non include costi di prestito titoli o margine.")
+    return {
+        "inputs": {"spot": spot, "shares": shares, "iv": iv, "shock": shock, "iv_jump": iv_jump, "hedge": hedge, "reinvest": reinvest,
+                   "dte": dte, "crash_days": crash_days, "contracts": n_con if legs else 0, "long_pct": lp, "short_pct": sp, "slip": slip, "skew": skew},
+        "legs": [{"side": "acquisto" if s > 0 else "vendita", "k": round(K, 2), "qty": q * n_con} for s, K, q in legs],
+        "steps": [
+            {"step": 1, "name": "Stato iniziale", "spot": round(spot, 2), "shares": shares, "asset_value": round(v0, 2), "hedge_cost": round(h_cost, 2)},
+            {"step": 2, "name": "Shock e coperture", "spot": round(s1, 2), "asset_value": round(shares * s1, 2), "asset_pnl": round(loss, 2),
+             "hedge_value": round(h_val, 2), "hedge_pnl": round(h_pnl, 2), "net_pnl": round(loss + h_pnl, 2),
+             "net_pct": round((loss + h_pnl) / v0 * 100, 2), "unhedged_pct": round(loss / v0 * 100, 2)},
+            {"step": 3, "name": "Chiusura e riallocazione", "cash_reinvested": round(cash, 2), "new_shares": round(new_shares, 2),
+             "shares_added_pct": round((new_shares / shares - 1) * 100, 2), "avg_cost": round((v0 + cash) / new_shares, 2),
+             "cash_left": round(left, 2), "equity": round(equity, 2), "recovery_price": round(recov, 2),
+             "recovery_price_unhedged": round(spot, 2)}],
+        "curve": curve, "breakeven_shock": be, "worst_hedge_shock": round(worst[0], 4), "worst_hedge_pnl": round(worst[1], 2), "notes": notes}

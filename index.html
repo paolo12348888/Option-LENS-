@@ -35,7 +35,7 @@ svg{width:100%;height:auto;display:block} .age{font-size:12px}
 <h1><span>OptionsLens</span><small>v1.0 · <a href="#" id="thm" style="color:var(--mut)">tema</a></small></h1>
 <div class="mut">Cosa fanno le opzioni di un titolo: volumi, premi, muri di open interest, volatilità, attività insolita. Dati CBOE ritardati di circa 15 minuti, ultima sessione disponibile.</div>
 <div class="card" id="pwbox" style="display:none"><label>Password</label><input id="pw" type="password"></div>
-<div class="tabs"><button id="t1" class="on">Analisi</button><button id="t2">Scanner</button><button id="t3">Rotazione</button></div>
+<div class="tabs"><button id="t1" class="on">Analisi</button><button id="t2">Scanner</button><button id="t3">Rotazione</button><button id="t4">Stress</button></div>
 
 <div id="p1">
   <div class="card">
@@ -52,6 +52,22 @@ svg{width:100%;height:auto;display:block} .age{font-size:12px}
   <div class="mut">Confronta la tecnologia con gli altri settori e con i titoli di Stato su 1, 5 e 20 sedute. Dati Alpaca ritardati di 15 minuti. È un indizio statistico, non la prova di cosa fanno i grandi fondi.</div>
   <button id="rotgo">Aggiorna</button><div id="roterr" class="bad"></div></div>
   <div id="rotout"></div>
+</div>
+
+<div id="p4" style="display:none">
+  <div class="card"><b>Stress test e ribilanciamento</b>
+  <div class="mut">Simula un crollo del titolo e cosa farebbe una copertura in tre passi: stato iniziale, shock con coperture, chiusura e riallocazione. È un calcolo educativo: non invia ordini.</div>
+  <div class="g2"><div><label>Prezzo ($)</label><input id="st_spot" inputmode="decimal"></div><div><label>IV annua (%)</label><input id="st_iv" inputmode="decimal"></div></div>
+  <div class="g2"><div><label>Azioni possedute</label><input id="st_sh" inputmode="numeric" value="1000"></div><div><label>Scadenza opzioni (giorni)</label><input id="st_dte" inputmode="numeric" value="45"></div></div>
+  <label>Shock: <b id="st_shv">-20%</b></label><input type="range" id="st_shock" min="-60" max="-1" value="-20" style="padding:0">
+  <label>Salto di IV: <b id="st_ijv">+15</b> punti</label><input type="range" id="st_ij" min="0" max="60" value="15" style="padding:0">
+  <label>Quota del guadagno della copertura reinvestita: <b id="st_rv">50%</b></label><input type="range" id="st_re" min="0" max="100" value="50" style="padding:0">
+  <label>Copertura</label><select id="st_h"><option value="bps">Bear put spread (95% / 80%)</option><option value="backspread">Put ratio backspread 1x2 (vendo 95%, compro 2 a 85%)</option><option value="delta">Delta hedge (vendita simulata del 50% delle azioni)</option><option value="none">Nessuna (solo confronto)</option></select>
+  <details style="margin-top:8px"><summary style="cursor:pointer" class="mut">Impostazioni avanzate</summary>
+  <div class="g2"><div><label>Giorni fino al crollo</label><input id="st_cd" inputmode="numeric" value="5"></div><div><label>Slippage bid/ask (%)</label><input id="st_sl" inputmode="decimal" value="3"></div></div>
+  <div class="g2"><div><label>Skew (punti IV ogni -10% di strike)</label><input id="st_sk" inputmode="decimal" value="0"></div><div><label>Contratti (vuoto = azioni/100)</label><input id="st_nc" inputmode="numeric"></div></div></details>
+  <button id="st_go">Simula</button><div id="st_err"></div></div>
+  <div id="st_out"></div>
 </div>
 
 <div id="p2" style="display:none">
@@ -392,8 +408,66 @@ function rotShow(j){
    +j.rows.map(r=>`<tr><td><b>${r.sym}</b><br><span class="mut">${r.name}</span></td>${cell(r.r1)}<td class="${r.r5==null?"mut":r.r5>=0?"ok":"bad"}">${r.r5==null?"n/d":'<b>'+(r.r5>=0?"+":"")+n2(r.r5)+"%</b>"}${rel(r.rel5,r.sym)}</td><td class="${r.r20==null?"mut":r.r20>=0?"ok":"bad"}">${r.r20==null?"n/d":'<b>'+(r.r20>=0?"+":"")+n2(r.r20)+"%</b>"}${rel(r.rel20,r.sym)}</td></tr>`).join("")
    +`</table><div class="mut">"vs S&P" = differenza rispetto all'S&P 500 (SPY) nello stesso periodo: positiva, il settore fa meglio dell'indice. Se la seduta di oggi è ancora in corso, l'ultima barra è parziale e ritardata di 15 minuti.</div></div>`;
   $("rotout").innerHTML=h}
-function tab(i){$("p1").style.display=i==1?"":"none";$("p2").style.display=i==2?"":"none";$("p3").style.display=i==3?"":"none";$("t1").className=i==1?"on":"";$("t2").className=i==2?"on":"";$("t3").className=i==3?"on":"";if(i==3&&!window.__rot)rotGo()}
-$("t1").onclick=()=>tab(1);$("t2").onclick=()=>tab(2);$("t3").onclick=()=>tab(3);$("rotgo").onclick=()=>rotGo();
+function tab(i){[1,2,3,4].forEach(k=>{$("p"+k).style.display=i==k?"":"none";$("t"+k).className=i==k?"on":""});if(i==3&&!window.__rot)rotGo();if(i==4)stFill()}
+$("t1").onclick=()=>tab(1);$("t2").onclick=()=>tab(2);$("t3").onclick=()=>tab(3);$("t4").onclick=()=>tab(4);$("rotgo").onclick=()=>rotGo();
+
+/* stress test e ribilanciamento */
+const sg=v=>(v>=0?"+":"−")+n0(Math.abs(v))+" $";
+function stFill(){
+  if(!LAST||window.__stSym===LAST.symbol)return;window.__stSym=LAST.symbol;
+  $("st_spot").value=LAST.spot;
+  const e=(LAST.expiries||[]).find(x=>x.atm_iv&&x.dte>=20)||(LAST.expiries||[]).find(x=>x.atm_iv);
+  if(e){$("st_iv").value=e.atm_iv;$("st_dte").value=Math.max(7,e.dte)}
+}
+[["st_shock","st_shv",v=>v+"%"],["st_ij","st_ijv",v=>"+"+v],["st_re","st_rv",v=>v+"%"]].forEach(([a,b,f])=>{$(a).oninput=()=>{$(b).textContent=f($(a).value)}});
+function stChart(c,shock){
+  const W=640,H=240,P=52,T=14,B=30,all=c.flatMap(x=>[x.unhedged,x.hedged,0]),lo=Math.min(...all),hi=Math.max(...all);
+  const x=s=>P+(-s/0.4)*(W-P-10),y=v=>T+(hi-v)/((hi-lo)||1)*(H-T-B);
+  const path=k=>c.map((p,i)=>(i?"L":"M")+x(p.shock).toFixed(1)+" "+y(p[k]).toFixed(1)).join("");
+  let g=`<line x1="${P}" x2="${W-10}" y1="${y(0)}" y2="${y(0)}" stroke="${css('--mut')}" stroke-dasharray="3 3"/>`;
+  g+=`<text x="2" y="${T+8}" fill="${css('--mut')}" font-size="11">${n0(hi)}</text><text x="2" y="${H-B}" fill="${css('--mut')}" font-size="11">${n0(lo)}</text>`;
+  for(let i=0;i<=4;i++){const s=-0.1*i;g+=`<text x="${x(s)}" y="${H-10}" fill="${css('--mut')}" font-size="11" text-anchor="middle">${(s*100).toFixed(0)}%</text>`}
+  if(shock>=-0.4)g+=`<line x1="${x(shock)}" x2="${x(shock)}" y1="${T}" y2="${H-B}" stroke="${css('--warn')}" stroke-dasharray="4 3"/>`;
+  g+=`<path d="${path("unhedged")}" fill="none" stroke="${css('--bad')}" stroke-width="2"/><path d="${path("hedged")}" fill="none" stroke="${css('--ok')}" stroke-width="2"/>`;
+  return `<svg viewBox="0 0 ${W} ${H}">${g}</svg><div class="mut"><span class="bad">■ non coperto</span> · <span class="ok">■ con copertura</span> · linea gialla = shock scelto. Asse verticale: P&amp;L in $.</div>`}
+function stShow(j){
+  const [a,b,c]=j.steps,I=j.inputs;
+  const cls=v=>v>=0?"ok":"bad";
+  let h=`<div class="card"><b>1 · Stato iniziale</b>
+   <div class="row"><span>Prezzo</span><b>${n2(a.spot)} $</b></div><div class="row"><span>Azioni</span><b>${n0(a.shares)}</b></div>
+   <div class="row"><span>Valore</span><b>${n0(a.asset_value)} $</b></div>
+   ${j.legs.length?`<div class="row"><span>Struttura (${I.contracts} contratti)</span><b>${j.legs.map(l=>l.side+" "+l.qty+"× put "+n2(l.k)).join("<br>")}</b></div><div class="row"><span>Premio netto pagato</span><b>${sg(-a.hedge_cost)}</b></div>`:I.hedge=="delta"?`<div class="mut">Vendita simulata del 50% delle azioni.</div>`:`<div class="mut">Nessuna copertura.</div>`}</div>`;
+  h+=`<div class="card"><b>2 · Shock e coperture</b> <span class="mut">(prezzo ${n2(a.spot)} → ${n2(b.spot)} $)</span>
+   <div class="row"><span>Perdita sulle azioni</span><b class="bad">${sg(b.asset_pnl)}</b></div>
+   <div class="row"><span>Risultato della copertura</span><b class="${cls(b.hedge_pnl)}">${sg(b.hedge_pnl)}</b></div>
+   <div class="row"><span>Netto con copertura</span><b class="${cls(b.net_pnl)}">${sg(b.net_pnl)} (${n2(b.net_pct)}%)</b></div>
+   <div class="row"><span>Non coperto</span><b class="bad">${sg(b.asset_pnl)} (${n2(b.unhedged_pct)}%)</b></div></div>`;
+  h+=`<div class="card"><b>3 · Chiusura e riallocazione</b>
+   <div class="row"><span>Guadagno reinvestito in azioni</span><b>${n0(c.cash_reinvested)} $</b></div>
+   <div class="row"><span>Nuove azioni</span><b>${n2(c.new_shares)} (${c.shares_added_pct>=0?"+":""}${n2(c.shares_added_pct)}%)</b></div>
+   <div class="row"><span>Costo medio</span><b>${n2(c.avg_cost)} $</b></div>
+   <div class="row"><span>Liquidità residua</span><b class="${cls(c.cash_left)}">${sg(c.cash_left)}</b></div>
+   <div class="row"><span>Prezzo per tornare al valore iniziale</span><b>${n2(c.recovery_price)} $</b></div>
+   <div class="mut">Senza copertura servirebbe tornare a ${n2(c.recovery_price_unhedged)} $. Il prezzo di recupero più basso è il vantaggio del ribilanciamento.</div></div>`;
+  h+=`<div class="card"><b>P&amp;L al variare dello shock</b>${stChart(j.curve,I.shock)}`;
+  if(I.hedge!="none"&&I.hedge!="delta"){
+    h+=`<div class="mut" style="margin-top:6px">Pareggio della copertura (guadagna più di quanto è costata): ${j.breakeven_shock==null?"non nel range testato":"intorno a "+n2(j.breakeven_shock*100)+"%"}. Punto peggiore: ${sg(j.worst_hedge_pnl)} con shock ${n2(j.worst_hedge_shock*100)}%.</div>`}
+  h+=`</div><div class="card"><b>Limiti del modello</b>${j.notes.map(x=>`<div class="mut">• ${x}</div>`).join("")}<div class="mut">• I dati CBOE ritardati non sono prezzi eseguibili. Strumento educativo, non consulenza finanziaria.</div></div>`;
+  $("st_out").innerHTML=h}
+async function stRun(){
+  const b=$("st_go"),v=id=>$(id).value.replace(",",".").trim();
+  b.disabled=true;$("st_err").textContent="";
+  try{
+    const p=new URLSearchParams({spot:v("st_spot"),iv:String(parseFloat(v("st_iv"))/100),shares:v("st_sh"),shock:String($("st_shock").value/100),
+      iv_jump:String($("st_ij").value/100),reinvest:String($("st_re").value/100),hedge:$("st_h").value,dte:v("st_dte"),crash_days:v("st_cd"),
+      slip:String((parseFloat(v("st_sl"))||0)/100),skew:String((parseFloat(v("st_sk"))||0)/100)});
+    if(v("st_nc"))p.set("contracts",v("st_nc"));
+    const r=await fetch("/api/stress?"+p,{headers:hdrs()}),j=await r.json();
+    if(!r.ok)throw new Error(j.error||"errore");
+    stShow(j)}
+  catch(e){$("st_err").textContent=e.message}
+  b.disabled=false}
+$("st_go").onclick=stRun;
 
 async function init(){
   try{META=await (await fetch("/api/meta")).json()}catch(e){$("err").textContent="Server non raggiungibile (se è fermo, aspetta un minuto e ricarica)."}

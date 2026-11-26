@@ -1,4 +1,4 @@
-import unittest, opt, random
+import unittest, opt, random, math, datetime
 
 def chain(spot=100.0):
     random.seed(3); o = []
@@ -24,7 +24,7 @@ class T(unittest.TestCase):
         m = opt.OCC.match("SPXW261204C05000000"); self.assertEqual(m.group(1), "SPXW"); self.assertEqual(int(m.group(4)) / 1000, 5000.0)
 
     def test_analyse(self):
-        r = opt.analyse(chain(), "XYZ")
+        r = opt.analyse(chain(), "XYZ", today=datetime.date(2026, 11, 21))
         self.assertEqual(r["wall_calls"][0]["k"], 110.0); self.assertEqual(r["wall_puts"][0]["k"], 90.0)
         self.assertTrue(r["unusual"] and r["unusual"][0]["k"] == 105.0 and r["unusual"][0]["type"] == "C")
         self.assertEqual(r["expiries"][0]["dte"], 13)
@@ -42,6 +42,60 @@ class T(unittest.TestCase):
 
     def test_empty(self):
         with self.assertRaises(ValueError): opt.analyse({"data": {"current_price": 10, "options": []}}, "X")
+
+
+class Stress(unittest.TestCase):
+    def sim(self, **k):
+        p = dict(spot=100.0, shares=1000, iv=0.35, shock=-0.2, iv_jump=0.15, hedge="bps", reinvest=0.5, dte=45, crash_days=5)
+        p.update(k); return opt.simulate_crash_rebalance(**p)
+
+    def test_put_call_parity(self):
+        S, K, T, iv, r = 100.0, 95.0, 0.25, 0.3, 0.04
+        c = opt.bs_price(S, K, T, iv, r, "C"); p = opt.bs_price(S, K, T, iv, r, "P")
+        self.assertAlmostEqual(c - p, S - K * math.exp(-r * T), places=8)
+        self.assertEqual(opt.bs_price(90, 100, 0, 0.3, 0, "P"), 10.0)
+
+    def test_no_hedge_pnl_exact(self):
+        s = self.sim(hedge="none")["steps"]
+        self.assertAlmostEqual(s[1]["net_pnl"], 1000 * 100 * -0.2, places=2)
+        self.assertEqual(s[2]["new_shares"], 1000)
+
+    def test_zero_shock_hedge_costs_only(self):
+        s = self.sim(shock=0.0, iv_jump=0.0, crash_days=0)["steps"]
+        self.assertAlmostEqual(s[1]["hedge_pnl"], 0.0, places=6)
+        s = self.sim(shock=0.0, iv_jump=0.0, slip=0.03)["steps"]
+        self.assertLess(s[1]["hedge_pnl"], 0)
+
+    def test_put_spread_gain_capped(self):
+        r = self.sim(shock=-0.9, iv_jump=1.0)
+        width = (95.0 - 80.0) * r["inputs"]["contracts"] * 100
+        self.assertLessEqual(r["steps"][1]["hedge_pnl"], width + 1e-6)
+        self.assertGreater(r["steps"][1]["hedge_pnl"], 0)
+
+    def test_equity_identity(self):
+        for h in opt.HEDGES:
+            s = self.sim(hedge=h)["steps"]
+            self.assertAlmostEqual(s[2]["equity"], 100000 + s[1]["asset_pnl"] + s[1]["hedge_pnl"], places=1)
+
+    def test_rebalance_buys_more_shares_and_lowers_cost(self):
+        s = self.sim()["steps"]
+        self.assertGreater(s[2]["new_shares"], 1000); self.assertLess(s[2]["avg_cost"], 100.0)
+        self.assertLess(s[2]["recovery_price"], 100.0)
+        self.assertEqual(self.sim(reinvest=0.0)["steps"][2]["new_shares"], 1000)
+
+    def test_backspread_has_loss_zone(self):
+        r = self.sim(hedge="backspread")
+        self.assertLess(r["worst_hedge_pnl"], 0); self.assertLess(r["worst_hedge_shock"], 0)
+        self.assertGreater(r["curve"][-1]["hedge_pnl"], 0)
+
+    def test_validation(self):
+        for bad in (dict(shock=-0.95), dict(shock=0.1), dict(hedge="xyz"), dict(iv=0), dict(reinvest=1.5), dict(spot=-1), dict(long_pct=0.7, short_pct=0.9)):
+            with self.assertRaises(ValueError): self.sim(**bad)
+
+    def test_from_chain_data(self):
+        r = opt.analyse(chain(), "XYZ"); e = next(x for x in r["expiries"] if x["atm_iv"] and x["dte"] >= 20)
+        s = opt.simulate_crash_rebalance(r["spot"], 500, e["atm_iv"] / 100.0, -0.15, dte=e["dte"], crash_days=3)
+        self.assertEqual(s["inputs"]["contracts"], 5); self.assertEqual(len(s["curve"]), 21)
 
 if __name__ == "__main__":
     unittest.main()
