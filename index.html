@@ -444,7 +444,7 @@ function stShow(j){
    <div class="row"><span>Dopo lo shock, non coperto</span><b class="${cls(P.pnl_unhedged_after)}">${sg(P.pnl_unhedged_after)} (${n2(P.pnl_unhedged_after_pct)}%)</b></div>
    <div class="row"><span>Dopo lo shock, con copertura</span><b class="${cls(P.pnl_hedged_after)}">${sg(P.pnl_hedged_after)} (${n2(P.pnl_hedged_after_pct)}%)</b></div>
    <div class="row"><span>Prezzo per tornare al capitale investito</span><b>${n2(P.recovery_price_cost)} $</b></div><div class="mut">Senza copertura servirebbe tornare a ${n2(P.cost_basis)} $.</div>
-   <div class="row"><span>Costo medio dopo il ribilanciamento</span><b>${n2(P.avg_cost_after)} $</b></div></div>`;
+   <div class="row"><span>Costo medio reale dopo il ribilanciamento</span><b>${n2(P.avg_cost_after)} $</b></div></div>`;
   if(j.warnings&&j.warnings.length)pre+=`<div class="card"><b class="warn">Attenzione</b>${j.warnings.map(x=>`<div class="mut">• ${x}</div>`).join("")}</div>`;
   const L=j.leverage;
   if(L){const lv=s=>s>=0?"già oltre questo livello":"se il prezzo scende sotto "+n2(a.spot*(1+s))+" $ ("+n2(s*100)+"%)";
@@ -468,9 +468,9 @@ function stShow(j){
   h+=`<div class="card"><b>3 · Chiusura e riallocazione</b>
    <div class="row"><span>Guadagno reinvestito in azioni</span><b>${n0(c.cash_reinvested)} $</b></div>
    <div class="row"><span>Nuove azioni</span><b>${n2(c.new_shares)} (${c.shares_added_pct>=0?"+":""}${n2(c.shares_added_pct)}%)</b></div>
-   <div class="row"><span>Costo medio</span><b>${n2(c.avg_cost)} $</b></div>
+   ${P?"":`<div class="row"><span>Costo medio</span><b>${n2(c.avg_cost)} $</b></div>`}
    <div class="row"><span>Liquidità residua</span><b class="${cls(c.cash_left)}">${sg(c.cash_left)}</b></div>
-   <div class="row"><span>Prezzo per tornare al valore iniziale</span><b>${n2(c.recovery_price)} $</b></div>
+   <div class="row"><span>Prezzo per tornare al valore di oggi</span><b>${n2(c.recovery_price)} $</b></div>
    <div class="mut">Senza copertura servirebbe tornare a ${n2(c.recovery_price_unhedged)} $. Il prezzo di recupero più basso è il vantaggio del ribilanciamento.</div></div>`;
   h+=`<div class="card"><b>P&amp;L al variare dello shock</b>${stChart(j.curve,I.shock)}`;
   if(I.hedge!="none"&&I.hedge!="delta"){
