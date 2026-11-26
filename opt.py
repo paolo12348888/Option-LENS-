@@ -334,7 +334,8 @@ def _check(name, v, lo, hi):
 
 
 def simulate_crash_rebalance(spot, shares, iv, shock, iv_jump=0.15, hedge="bps", reinvest=0.5, dte=45, crash_days=5,
-                             long_pct=None, short_pct=None, contracts=None, r=0.04, slip=0.0, skew=0.0, hedge_ratio=0.5):
+                             long_pct=None, short_pct=None, contracts=None, r=0.04, slip=0.0, skew=0.0, hedge_ratio=0.5,
+                             cost_basis=None):
     """Simula un crollo e il ribilanciamento in tre passi: 1) stato iniziale, 2) shock e copertura, 3) chiusura e riallocazione.
     shock è negativo (es. -0.2 = -20%); iv e iv_jump sono decimali (0.35 = 35%). Restituisce un dizionario con i passi,
     la curva P&L al variare dello shock e il punto di pareggio della copertura. Non invia ordini: è un calcolo."""
@@ -344,6 +345,7 @@ def simulate_crash_rebalance(spot, shares, iv, shock, iv_jump=0.15, hedge="bps",
     dte = int(_check("I giorni a scadenza", dte, 7, 365)); crash_days = int(_check("I giorni fino al crollo", crash_days, 0, dte - 1))
     slip = _check("Lo slippage", slip, 0.0, 0.5); skew = _check("Lo skew", skew, 0.0, 0.5); r = _check("Il tasso", r, 0.0, 0.2)
     hedge_ratio = _check("La quota di delta hedge", hedge_ratio, 0.0, 1.0)
+    cost = None if cost_basis is None else _check("Il prezzo di carico", cost_basis, 0.01, 1e7)
     if hedge not in HEDGES:
         raise ValueError("Copertura non valida: scegli tra %s." % ", ".join(HEDGES))
     n_con = max(1, int(round(shares / 100.0))) if contracts is None else int(_check("I contratti", contracts, 1, 1e7))
@@ -392,6 +394,14 @@ def simulate_crash_rebalance(spot, shares, iv, shock, iv_jump=0.15, hedge="bps",
         if p < 0: seen_neg = True
         elif seen_neg: be = round(sh, 4); break
     worst = min(scan, key=lambda x: x[1])
+    pos = None
+    if cost:                                                             # la tua posizione rispetto al prezzo a cui hai comprato
+        inv = shares * cost
+        pos = {"cost_basis": round(cost, 2), "invested": round(inv, 2), "value_now": round(v0, 2), "pnl_now": round(v0 - inv, 2),
+               "pnl_now_pct": round((v0 / inv - 1) * 100, 2), "pnl_unhedged_after": round(shares * s1 - inv, 2),
+               "pnl_unhedged_after_pct": round((shares * s1 / inv - 1) * 100, 2), "pnl_hedged_after": round(equity - inv, 2),
+               "pnl_hedged_after_pct": round((equity / inv - 1) * 100, 2), "avg_cost_after": round((inv + cash) / new_shares, 2),
+               "recovery_price_cost": round((inv - left) / new_shares, 2)}
     notes = ["Modello Black-Scholes con IV unica%s: in un crollo vero gli spread bid/ask si allargano, la IV sale in modo diverso strike per strike "
              "e ci sono gap notturni. È utile per capire la logica del ribilanciamento, non per prevedere il centesimo." % (" e skew semplice" if skew > 0 else ""),
              "Il salto di IV scelto si applica per intero allo shock scelto e in proporzione per shock più piccoli."]
@@ -412,4 +422,4 @@ def simulate_crash_rebalance(spot, shares, iv, shock, iv_jump=0.15, hedge="bps",
              "shares_added_pct": round((new_shares / shares - 1) * 100, 2), "avg_cost": round((v0 + cash) / new_shares, 2),
              "cash_left": round(left, 2), "equity": round(equity, 2), "recovery_price": round(recov, 2),
              "recovery_price_unhedged": round(spot, 2)}],
-        "curve": curve, "breakeven_shock": be, "worst_hedge_shock": round(worst[0], 4), "worst_hedge_pnl": round(worst[1], 2), "notes": notes}
+        "position": pos, "curve": curve, "breakeven_shock": be, "worst_hedge_shock": round(worst[0], 4), "worst_hedge_pnl": round(worst[1], 2), "notes": notes}

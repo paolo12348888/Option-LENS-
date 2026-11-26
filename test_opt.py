@@ -88,6 +88,14 @@ class Stress(unittest.TestCase):
         self.assertLess(r["worst_hedge_pnl"], 0); self.assertLess(r["worst_hedge_shock"], 0)
         self.assertGreater(r["curve"][-1]["hedge_pnl"], 0)
 
+    def test_position_vs_cost_basis(self):
+        r = self.sim(cost_basis=80.0)
+        p = r["position"]; self.assertAlmostEqual(p["invested"], 80000.0); self.assertAlmostEqual(p["pnl_now"], 20000.0)
+        self.assertAlmostEqual(p["pnl_unhedged_after"], 0.0, places=2)             # -20% da 100 riporta esattamente al carico
+        self.assertGreater(p["pnl_hedged_after"], p["pnl_unhedged_after"])
+        self.assertLess(p["recovery_price_cost"], 80.0)
+        self.assertIsNone(self.sim()["position"])
+
     def test_validation(self):
         for bad in (dict(shock=-0.95), dict(shock=0.1), dict(hedge="xyz"), dict(iv=0), dict(reinvest=1.5), dict(spot=-1), dict(long_pct=0.7, short_pct=0.9)):
             with self.assertRaises(ValueError): self.sim(**bad)

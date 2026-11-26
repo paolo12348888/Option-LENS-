@@ -286,8 +286,50 @@ def rotation():
     return res
 
 
+def hist_close(sym, day):
+    """Chiusura Alpaca (corretta per gli split) della prima seduta a partire da `day` (AAAA-MM-GG)."""
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", day or ""):
+        raise ValueError("Data non valida: usa il formato AAAA-MM-GG.")
+    d0 = datetime.date.fromisoformat(day)
+    if d0 > datetime.date.today() or d0 < datetime.date(2016, 1, 1):
+        raise ValueError("La data di acquisto deve essere tra il 2016 e oggi.")
+    if DEMO:
+        return round(f_demo_spot(sym) * 0.9, 2)
+    if not (ALPACA_ID and ALPACA_SECRET):
+        raise ValueError("Per usare la data di acquisto servono le chiavi Alpaca: inserisci invece il prezzo di carico.")
+    st = datetime.datetime(d0.year, d0.month, d0.day, tzinfo=datetime.timezone.utc)
+    end = min(st + datetime.timedelta(days=7), datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=16))
+    p = {"timeframe": "1Day", "start": st.strftime("%Y-%m-%dT%H:%M:%SZ"), "end": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+         "limit": 1, "adjustment": "split", "feed": "sip"}
+    try:
+        try:
+            j = _alp_get("/v2/stocks/%s/bars" % urllib.parse.quote(sym), p)
+        except urllib.error.HTTPError as e:
+            if e.code not in (403, 422):
+                raise
+            p["feed"] = "iex"
+            j = _alp_get("/v2/stocks/%s/bars" % urllib.parse.quote(sym), p)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise ValueError("Alpaca ha rifiutato le chiavi o il piano non include lo storico.")
+        if e.code == 429:
+            raise ValueError("Alpaca: troppe richieste, riprova tra poco.")
+        raise ValueError("Alpaca ha risposto %s." % e.code)
+    except Exception:
+        raise ValueError("Alpaca non raggiungibile.")
+    bars = j.get("bars") or []
+    if not bars:
+        raise ValueError("Alpaca non ha una chiusura per %s intorno al %s: inserisci il prezzo di carico." % (sym, day))
+    return float(bars[0]["c"])
+
+
+def f_demo_spot(sym):
+    return demo_doc(sym)["data"]["current_price"]
+
+
 def stress_query(qs):
-    """Parametri della query -> simulazione di crollo e ribilanciamento (calcolo puro, nessun dato esterno)."""
+    """Parametri della query -> simulazione di crollo e ribilanciamento. Con `symbol` il server scarica da solo prezzo
+    (Alpaca, altrimenti CBOE) e volatilità (CBOE); senza, servono spot e iv. Calcolo educativo: nessun ordine."""
     q = urllib.parse.parse_qs(qs)
 
     def num(k, d=None):
@@ -301,13 +343,53 @@ def stress_query(qs):
             raise ValueError("Parametro non valido: %s." % k)
 
     def opt_num(k):
-        return num(k, 0.0) or None if k in q and q[k][0] != "" else None
-    hedge = (q.get("hedge") or ["bps"])[0]
-    contracts = opt_num("contracts")
-    return opt.simulate_crash_rebalance(
-        spot=num("spot"), shares=num("shares"), iv=num("iv"), shock=num("shock"), iv_jump=num("iv_jump", 0.15), hedge=hedge,
-        reinvest=num("reinvest", 0.5), dte=num("dte", 45), crash_days=num("crash_days", 5), long_pct=opt_num("long_pct"),
-        short_pct=opt_num("short_pct"), contracts=contracts, slip=num("slip", 0.03), skew=num("skew", 0.0), hedge_ratio=num("hedge_ratio", 0.5))
+        return (num(k, 0.0) or None) if k in q and q[k][0] != "" else None
+    sym = (q.get("symbol") or [""])[0].strip().upper()
+    ctx = {}
+    spot, iv, dte = opt_num("spot"), opt_num("iv"), opt_num("dte")
+    if sym:
+        if not SYMBOL.match(sym):
+            raise ValueError("Simbolo non valido.")
+        ctx["symbol"] = sym
+        if spot is None or iv is None:
+            an = analyse_symbol(sym)
+            ex = next((e for e in an["expiries"] if e["atm_iv"] and e["dte"] >= 20), None) or next((e for e in an["expiries"] if e["atm_iv"]), None)
+            if spot is None:
+                spot, ctx["spot_source"] = an["spot"], "prezzo CBOE ritardato (seduta del %s)" % an.get("trade_date")
+                try:
+                    x = ext_quote(sym)
+                    if x.get("ok") and x.get("age_min", 9999) <= 120:
+                        spot, ctx["spot_source"] = x["price"], "Alpaca, ultimo scambio in %s (ritardo ~%d min)" % (x["phase"], x["age_min"])
+                except ValueError:
+                    pass
+            if iv is None:
+                if not ex:
+                    raise ValueError("Volatilità implicita non disponibile per %s: inseriscila a mano nelle impostazioni avanzate." % sym)
+                iv = ex["atm_iv"] / 100.0
+                ctx["iv_source"] = "IV al denaro CBOE della scadenza %s" % ex["exp"]
+                if dte is None:
+                    dte = max(7, ex["dte"])
+    else:
+        spot, iv = num("spot"), num("iv")
+    cost, cost_src = opt_num("cost"), "inserito da te"
+    if cost is None and q.get("date") and q["date"][0]:
+        if not sym:
+            raise ValueError("La data di acquisto richiede il titolo.")
+        cost, cost_src = hist_close(sym, q["date"][0]), "chiusura Alpaca del %s" % q["date"][0]
+    shares, usd = opt_num("shares"), opt_num("usd")
+    if shares is None:
+        if usd is None:
+            raise ValueError("Inserisci le azioni possedute oppure i dollari investiti.")
+        shares = usd / (cost or spot)
+    res = opt.simulate_crash_rebalance(
+        spot=spot, shares=shares, iv=iv, shock=num("shock"), iv_jump=num("iv_jump", 0.15), hedge=(q.get("hedge") or ["bps"])[0],
+        reinvest=num("reinvest", 0.5), dte=dte if dte else 45, crash_days=num("crash_days", 5), long_pct=opt_num("long_pct"),
+        short_pct=opt_num("short_pct"), contracts=opt_num("contracts"), slip=num("slip", 0.03), skew=num("skew", 0.0),
+        hedge_ratio=num("hedge_ratio", 0.5), cost_basis=cost)
+    if cost:
+        ctx["cost_source"] = cost_src
+    res["context"] = ctx
+    return res
 
 
 def too_many(ip):
