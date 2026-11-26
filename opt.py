@@ -256,17 +256,24 @@ def analyse(doc, symbol, today=None):
     daily = spot * (iv_front / 100.0) * math.sqrt(1 / 252.0) if iv_front else spot * 0.01     # 1 deviazione standard di un giorno di borsa
     wpct = min(max(2 * daily / spot, 0.02), 0.10)                                               # finestra: ±2σ giornaliere, tra 2% e 10%
     lo_k, hi_k = spot * (1 - wpct), spot * (1 + wpct)
-    irows = []
+    irows, allc = [], []
     for p in ([x for x in per if x["dte"] <= 7][:5] or per[:1]):
         e = datetime.date.fromisoformat(p["exp"])
         ec = [c for c in cs if c["exp"] == e and lo_k <= c["k"] <= hi_k]
         if not ec:
             continue
+        allc += ec
         w = walls(ec, spot)
         irows.append({"exp": p["exp"], "dte": p["dte"], "call_wall": w["call_wall"], "put_wall": w["put_wall"],
                       "call_oi_top": w["call_oi_top"], "put_oi_top": w["put_oi_top"],
                       "gex_net": round(sum((1 if c["type"] == "C" else -1) * gex_of(c, spot) for c in ec), 1),
                       "zero_gamma": zero_gamma(gex_curve(ec, spot, asof), spot), "max_pain_full": p["max_pain"]})
+    if len(irows) >= 2:                      # muro composito: gamma e contratti di tutte le scadenze vicine sommati per strike
+        w = walls(allc, spot)
+        irows.insert(0, {"exp": "insieme", "dte": None, "call_wall": w["call_wall"], "put_wall": w["put_wall"],
+                         "call_oi_top": w["call_oi_top"], "put_oi_top": w["put_oi_top"],
+                         "gex_net": round(sum((1 if c["type"] == "C" else -1) * gex_of(c, spot) for c in allc), 1),
+                         "zero_gamma": zero_gamma(gex_curve(allc, spot, asof), spot), "max_pain_full": None})
     if irows:
         intraday = {"window_pct": round(wpct * 100, 1), "lo": round(lo_k, 2), "hi": round(hi_k, 2), "daily_sd": round(daily, 2), "iv": iv_front,
                     "sd1_dn": round(spot - daily, 2), "sd1_up": round(spot + daily, 2), "sd2_dn": round(spot - 2 * daily, 2), "sd2_up": round(spot + 2 * daily, 2),
